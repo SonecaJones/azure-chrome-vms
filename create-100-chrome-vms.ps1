@@ -8,14 +8,22 @@ $location = "brazilsouth"           # ajuste se quiser outra região
 $nsgName = "nsg-chrome-win11"
 $vmBaseName = "chrome-vm"
 $imageUrn = "MicrosoftWindowsDesktop:windows11preview:win11-25h2-pro:latest"
-$vmSize = "Standard_D2s_v5"
-$vmCount = 100
+$vmSize = "Standard_DS1_v2"
+$vmCount = 1
 
 $adminUser = ""
 $adminPass = ""   # <-- troque por senha forte
 
-# URL pública do install-chrome.ps1 (suba o script e coloque a URL aqui)
-$scriptUrl = "https://raw.githubusercontent.com/SEU-USER/SEU-REPO/main/install-chrome.ps1"  # <-- substitua
+# Criar arquivo JSON de settings
+$settingsObj = @{
+    fileUris = @($scriptUrl)
+    commandToExecute = "powershell -ExecutionPolicy Unrestricted -File install-chrome.ps1"
+}
+
+$settingsPath = ".\settings-chrome.json"
+$settingsObj | ConvertTo-Json -Depth 10 | Out-File -Encoding UTF8 $settingsPath
+
+Write-Host "Arquivo JSON gerado em: $settingsPath"
 
 # --------- CRIAR RESOURCE GROUP (se já existir, ignora) ----------
 Write-Output "Criando resource group $resourceGroup (se não existir)..."
@@ -63,7 +71,13 @@ for ($i = 1; $i -le $vmCount; $i++) {
       --admin-password $adminPass `
       --public-ip-sku Standard `
       --nsg $nsgName `
-      --no-wait | Out-Null
+      --priority Spot `
+      --eviction-policy Delete `
+      --max-price -1 `
+      --nic-delete-option Delete `
+      --storage-sku StandardSSD_LRS `
+      --os-disk-size-gb 127 `
+      --os-disk-delete-option Delete 
 
     Write-Output "VM $vmName criada. Aguardando disponibilidade para anexar extensão..."
 
@@ -75,17 +89,15 @@ for ($i = 1; $i -le $vmCount; $i++) {
 
     Write-Output "Anexando Custom Script Extension (instala Chrome)..."
 
-    $extSettings = @{
-      "fileUris" = @($scriptUrl)
-      "commandToExecute" = "powershell -ExecutionPolicy Unrestricted -File install-chrome.ps1"
-    } | ConvertTo-Json -Depth 4
-
+    # Anexar extensão
     az vm extension set `
-      --publisher Microsoft.Compute `
-      --name CustomScriptExtension `
-      --resource-group $resourceGroup `
-      --vm-name $vmName `
-      --settings "$extSettings" | Out-Null
+        --publisher Microsoft.Compute `
+        --name CustomScriptExtension `
+        --resource-group $resourceGroup `
+        --vm-name $vmName `
+        --settings $settingsPath `
+        --protected-settings "{}"
+
 
     Write-Output "Extensão anexada à VM $vmName. Próxima VM..."
     # Pequena pausa para reduzir chance de throttling

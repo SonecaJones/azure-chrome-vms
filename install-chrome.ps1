@@ -34,8 +34,9 @@ $startScriptPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\c
 $startScriptContent = @"
 Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" `
   --remote-debugging-port=9222 `
+  --remote-debugging-address=0.0.0.0 `
+  --user-data-dir="C:\chrome-data" `
   --no-first-run `
-  --no-default-browser-check `
   --disable-popup-blocking
 "@
 
