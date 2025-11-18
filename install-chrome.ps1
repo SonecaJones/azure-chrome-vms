@@ -32,12 +32,7 @@ Write-Output "Criando script de auto-start do Chrome (porta 9222)..."
 $startScriptPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\chrome_autostart.ps1"
 
 $startScriptContent = @"
-Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" `
-  --remote-debugging-port=9222 `
-  --remote-debugging-address=0.0.0.0 `
-  --user-data-dir="C:\chrome-data" `
-  --no-first-run `
-  --disable-popup-blocking
+Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\chrome-data" --no-first-run --no-default-browser-check --disable-popup-blocking --ignore-certificate-errors
 "@
 
 $startScriptContent | Out-File -FilePath $startScriptPath -Encoding UTF8 -Force
@@ -49,7 +44,7 @@ $startScriptContent | Out-File -FilePath $startScriptPath -Encoding UTF8 -Force
 Write-Output "Liberando porta 9222 no firewall interno..."
 
 New-NetFirewallRule `
-  -DisplayName "Chrome CDP 9222" `
+  -DisplayName "Chrome CDP SSH 9222" `
   -Direction Inbound `
   -Protocol TCP `
   -LocalPort 9222 `
@@ -70,6 +65,17 @@ $Shortcut = $WshShell.CreateShortcut($shortcutPath)
 $Shortcut.TargetPath = "powershell.exe"
 $Shortcut.Arguments = "-ExecutionPolicy Bypass -File `"$startScriptPath`""
 $Shortcut.Save()
+
+
+Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH*'
+
+Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+
+# Start the sshd service
+Start-Service sshd
+
+# OPTIONAL but recommended:
+Set-Service -Name sshd -StartupType 'Automatic'
 
 # ------------------------------------------------
 # 6. Conclusão

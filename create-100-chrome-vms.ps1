@@ -14,10 +14,13 @@ $vmCount = 1
 $adminUser = ""
 $adminPass = ""   # <-- troque por senha forte
 
+# URL pública do install-chrome.ps1 (suba o script e coloque a URL aqui)
+$scriptUrl = "https://raw.githubusercontent.com/SonecaJones/azure-chrome-vms/main/install-chrome.ps1"  # <-- substitua
+
 # Criar arquivo JSON de settings
 $settingsObj = @{
-    fileUris = @($scriptUrl)
-    commandToExecute = "powershell -ExecutionPolicy Unrestricted -File install-chrome.ps1"
+  fileUris         = @($scriptUrl)
+  commandToExecute = "powershell -ExecutionPolicy Unrestricted -File install-chrome.ps1"
 }
 
 $settingsPath = ".\settings-chrome.json"
@@ -55,53 +58,56 @@ az network nsg rule create `
 
 # --------- LOOP PARA CRIAR VMS ----------
 for ($i = 1; $i -le $vmCount; $i++) {
-    $index = $i.ToString("000")            # chrome-vm-001, chrome-vm-002, ...
-    $vmName = "$vmBaseName-$index"
+  $index = $i.ToString("000")            # chrome-vm-001, chrome-vm-002, ...
+  $vmName = "$vmBaseName-$index"
 
-    Write-Output "-------------------------------"
-    Write-Output "Criando VM: $vmName"
+  Write-Output "-------------------------------"
+  Write-Output "Criando VM: $vmName"
 
-    # Criar VM (inclui NIC e Public IP automaticamente)
-    az vm create `
+  # Criar VM (inclui NIC e Public IP automaticamente)
+  az vm create `
+    --resource-group $resourceGroup `
+    --name $vmName `
+    --image $imageUrn `
+    --size $vmSize `
+    --admin-username $adminUser `
+    --admin-password $adminPass `
+    --public-ip-sku Standard `
+    --nsg $nsgName `
+    --priority Spot `
+    --eviction-policy Delete `
+    --max-price -1 `
+    --nic-delete-option Delete `
+    --storage-sku StandardSSD_LRS `
+    --os-disk-size-gb 127 `
+    --os-disk-delete-option Delete 
+
+  Write-Output "VM $vmName criada. Aguardando disponibilidade para anexar extensão..."
+
+  do {
+    Start-Sleep -Seconds 5
+    $provisioning = az vm get-instance-view `
       --resource-group $resourceGroup `
       --name $vmName `
-      --image $imageUrn `
-      --size $vmSize `
-      --admin-username $adminUser `
-      --admin-password $adminPass `
-      --public-ip-sku Standard `
-      --nsg $nsgName `
-      --priority Spot `
-      --eviction-policy Delete `
-      --max-price -1 `
-      --nic-delete-option Delete `
-      --storage-sku StandardSSD_LRS `
-      --os-disk-size-gb 127 `
-      --os-disk-delete-option Delete 
+      --query "instanceView.statuses[?starts_with(code, 'ProvisioningState/')].displayStatus" -o tsv 2>$null
+  } while (-not ($provisioning -match "succeeded"))
 
-    Write-Output "VM $vmName criada. Aguardando disponibilidade para anexar extensão..."
+  Write-Output "Provisionamento concluído: $provisioning"
+  Write-Output "Anexando Custom Script Extension (instala Chrome)..."
 
-    # Aguarda até a VM ter estado 'Succeeded' (pouco polling simples)
-    do {
-        Start-Sleep -Seconds 5
-        $provisioning = az vm get-instance-view --resource-group $resourceGroup --name $vmName --query "instanceView.statuses[?starts_with(code, 'ProvisioningState/')].displayStatus" -o tsv 2>$null
-    } while ($provisioning -ne "Provisioning succeeded")
-
-    Write-Output "Anexando Custom Script Extension (instala Chrome)..."
-
-    # Anexar extensão
-    az vm extension set `
-        --publisher Microsoft.Compute `
-        --name CustomScriptExtension `
-        --resource-group $resourceGroup `
-        --vm-name $vmName `
-        --settings $settingsPath `
-        --protected-settings "{}"
+  # Anexar extensão
+  az vm extension set `
+    --publisher Microsoft.Compute `
+    --name CustomScriptExtension `
+    --resource-group $resourceGroup `
+    --vm-name $vmName `
+    --settings $settingsPath `
+    --protected-settings "{}"
 
 
-    Write-Output "Extensão anexada à VM $vmName. Próxima VM..."
-    # Pequena pausa para reduzir chance de throttling
-    Start-Sleep -Seconds 2
+  Write-Output "Extensão anexada à VM $vmName. Próxima VM..."
+  # Pequena pausa para reduzir chance de throttling
+  Start-Sleep -Seconds 2
 }
 
 Write-Output "-------------------------------"
