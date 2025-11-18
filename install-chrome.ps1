@@ -32,7 +32,7 @@ Write-Output "Criando script de auto-start do Chrome (porta 9222)..."
 $startScriptPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\chrome_autostart.ps1"
 
 $startScriptContent = @"
-Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\chrome-data" --no-first-run --no-default-browser-check --disable-popup-blocking --ignore-certificate-errors
+Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9223 --user-data-dir="C:\chrome-data" --no-first-run --no-default-browser-check --disable-popup-blocking --ignore-certificate-errors
 "@
 
 $startScriptContent | Out-File -FilePath $startScriptPath -Encoding UTF8 -Force
