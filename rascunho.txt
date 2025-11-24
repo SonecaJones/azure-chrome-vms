@@ -10,3 +10,21 @@
 
 
 "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --user-data-dir="C:\chrome-data" --no-first-run --no-default-browser-check --disable-popup-blocking
+
+
+ssh -L 9222:127.0.0.1:9222 robodpc@20.xx.xx.xx
+
+
+Get-Service sshd
+
+Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH*'
+
+Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+
+# Start the sshd service
+Start-Service sshd
+
+# OPTIONAL but recommended:
+Set-Service -Name sshd -StartupType 'Automatic'
