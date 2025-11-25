@@ -9,10 +9,10 @@
 
 
 
-"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --user-data-dir="C:\chrome-data" --no-first-run --no-default-browser-check --disable-popup-blocking
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\chrome-data" --no-first-run --no-default-browser-check --disable-popup-blocking
 
 
-ssh -L 9222:127.0.0.1:9222 robodpc@20.xx.xx.xx
+ssh -L 9222:127.0.0.1:9223 robodpc@4.201.174.204
 
 
 Get-Service sshd
@@ -28,3 +28,7 @@ Start-Service sshd
 
 # OPTIONAL but recommended:
 Set-Service -Name sshd -StartupType 'Automatic'
+
+
+
+az vm list --resource-group rg-bot-farm --show-details --query "[].{Name:name, State:powerState, IP:publicIps}" -o table

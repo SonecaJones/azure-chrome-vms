@@ -51,6 +51,16 @@ New-NetFirewallRule `
   -Action Allow `
   -ErrorAction SilentlyContinue
 
+Write-Output "Liberando porta 22 no firewall interno..."
+
+New-NetFirewallRule `
+  -DisplayName "SSH 22" `
+  -Direction Inbound `
+  -Protocol TCP `
+  -LocalPort 22 `
+  -Action Allow `
+  -ErrorAction SilentlyContinue
+
 # ------------------------------------------------
 # 5. Criar atalho para executar o script no startup via PowerShell
 #    (necessário porque Windows ignora .ps1 direto no Startup)

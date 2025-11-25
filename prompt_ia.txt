@@ -1,0 +1,8 @@
+preciso rodar 100 navegadores chromes em VMs diferentes, cada uma com um IP publico unico, consegui muito bem na VM azure.
+As maquinas rodaram uma vez por mes somente, durante um periodo aproximado de 1uma hora.
+As maquinas rodaram windows 11.
+passo-a-passo de como preparar essa "Golden Image"
+o navegador precisa estar headful e com porta aberta para debug a fim de conectar via CDP usando nodejs.
+Essa conexão debug em chrome headful so funciona localmente, mas consegui fazer funcionar usando SSH tunneling.
+Outra saida seria rodar um script nodejs independente em cada VM para controlar o chrome localmente, e cada script se comunicaria com uma base de dados para manter registro, ou com um script central via websocket mandando notificacoes de progresso.
+Qual a melhor arquitetura baseada nesas ideias para implementacao.

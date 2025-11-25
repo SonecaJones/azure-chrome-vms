@@ -1,6 +1,6 @@
 {
+  "commandToExecute": "powershell -ExecutionPolicy Unrestricted -File install-chrome.ps1",
   "fileUris": [
     "https://raw.githubusercontent.com/SonecaJones/azure-chrome-vms/main/install-chrome.ps1"
-  ],
-  "commandToExecute": "powershell -ExecutionPolicy Unrestricted -File install-chrome.ps1"
+  ]
 }
