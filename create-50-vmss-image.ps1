@@ -15,10 +15,10 @@ az network vnet subnet create `
 # Depois crie o VMSS referenciando essa VNet 
 az vmss create `
   --resource-group dpcrobos `
-  --name VMSSRoboDPC_ `
+  --name VMSSRoboDPC1 `
   --orchestration-mode Flexible `
-  --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/robodpc/images/robodpcVMI/versions/1.0.0" `
-  --instance-count 2 `
+  --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/vmssrobodpc/images/vmrobodpcimg/versions/1.0.0" `
+  --instance-count 1 `
   --vm-sku Standard_D2s_v3 `
   --priority Spot `
   --eviction-policy Delete `
@@ -40,7 +40,7 @@ az vmss create `
   --name VMSSRoboDPC `
   --orchestration-mode Uniform `
   --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/vmssrobodpc/images/vmrobodpcimg/versions/1.0.0" `
-  --instance-count 5 `
+  --instance-count 2 `
   --vm-sku Standard_D2s_v3 `
   --priority Spot `
   --eviction-policy Delete `
