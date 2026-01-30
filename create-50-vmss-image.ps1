@@ -39,12 +39,12 @@ az vmss create `
   --resource-group dpcrobos `
   --name VMSSRoboDPC `
   --orchestration-mode Uniform `
-  --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/vmssrobodpc/images/vmrobodpcimg/versions/1.0.0" `
+  --computer-name-prefix VMRoboDPC `
+  --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/robodpc/images/robodpcVMI/versions/1.0.0" `
   --instance-count 2 `
   --vm-sku Standard_D2s_v3 `
   --priority Spot `
   --eviction-policy Delete `
-  --max-price -1 `
   --public-ip-per-vm `
   --storage-sku StandardSSD_LRS `
   --vnet-name VNet-RoboDPC `
@@ -54,8 +54,7 @@ az vmss create `
   --security-type TrustedLaunch `
   --enable-vtpm true `
   --enable-secure-boot true `
-  --upgrade-policy-mode Manual `
-  --computer-name-prefix VM_RoboDPC
+  --upgrade-policy-mode Manual
 
 
 # SCRIPT DURANTE CRIACAO
