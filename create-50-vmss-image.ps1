@@ -39,8 +39,8 @@ az vmss create `
   --resource-group dpcrobos `
   --name VMSSRoboDPC `
   --orchestration-mode Uniform `
-  --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/robodpc/images/robodpcVMI/versions/1.0.0" `
-  --instance-count 2 `
+  --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/vmssrobodpc/images/vmrobodpcimg/versions/1.0.0" `
+  --instance-count 5 `
   --vm-sku Standard_D2s_v3 `
   --priority Spot `
   --eviction-policy Delete `
@@ -55,7 +55,7 @@ az vmss create `
   --enable-vtpm true `
   --enable-secure-boot true `
   --upgrade-policy-mode Manual `
-  --computer-name-prefix RoboDPC
+  --computer-name-prefix VM_RoboDPC
 
 
 # SCRIPT DURANTE CRIACAO
@@ -142,17 +142,17 @@ Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force
 criar imagem da VM especializada, sem sysprep
 
 #localizar a imagem
-az sig image-definition list -g dpcrobos --gallery-name robodpc -o table  
+az sig image-definition list -g dpcrobos --gallery-name vmssrobodpc -o table  
 
 az sig image-version list `
   --resource-group dpcrobos `
-  --gallery-name robodpc `
-  --gallery-image-definition robodpcVMI `
+  --gallery-name vmssrobodpc `
+  --gallery-image-definition vmrobodpcimg `
   --output table
 
 az sig image-version show `
    --resource-group dpcrobos `
-   --gallery-name robodpc `
-   --gallery-image-definition robodpcVMI `
+   --gallery-name vmssrobodpc `
+   --gallery-image-definition vmrobodpcimg `
    --gallery-image-version 1.0.0 `
    --query id -o tsv
