@@ -11,6 +11,34 @@ az network vnet subnet create `
   --name Subnet-RoboDPC `
   --address-prefix 10.0.1.0/24
 
+# 1. Criar Network Security Group (NSG)
+az network nsg create `
+  --resource-group dpcrobos `
+  --name NSG-RoboDPC `
+  --location brazilsouth
+
+# 2. Criar regra para permitir RDP (porta 3389)
+az network nsg rule create `
+  --resource-group dpcrobos `
+  --nsg-name NSG-RoboDPC `
+  --name Allow-RDP `
+  --priority 1000 `
+  --source-address-prefixes '*' `
+  --source-port-ranges '*' `
+  --destination-address-prefixes '*' `
+  --destination-port-ranges 3389 `
+  --access Allow `
+  --protocol Tcp `
+  --direction Inbound `
+  --description "Permitir RDP de qualquer origem"
+
+# 3. Associar NSG à Subnet
+az network vnet subnet update `
+  --resource-group dpcrobos `
+  --vnet-name VNet-RoboDPC `
+  --name Subnet-RoboDPC `
+  --network-security-group NSG-RoboDPC
+
 #********************* Essa é a mais próxima do sucesso até agora ******************************************
 # Depois crie o VMSS referenciando essa VNet 
 az vmss create `
@@ -34,6 +62,7 @@ az vmss create `
   --enable-secure-boot true
 
 
+  # *********** dando erro de imagem especializada em modo UNIFORM **************
 #MODO UNIFORM PARA IDS SEQUENCIAIS
 az vmss create `
   --resource-group dpcrobos `
