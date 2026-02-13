@@ -221,9 +221,11 @@ qwinsta
 
 lista chromes ativos
 Get-Process chrome | select MainWindowTitle,Id,SessionId
+Get-Process node | select MainWindowTitle,Id,SessionId
 
 encerra todos os chromes
 Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force
 
 criar imagem da VM especializada, sem sysprep
 
