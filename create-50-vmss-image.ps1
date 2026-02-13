@@ -32,6 +32,21 @@ az network nsg rule create `
   --direction Inbound `
   --description "Permitir RDP de qualquer origem"
 
+# Adicionar regra NSG para porta 5900 (VNC)
+az network nsg rule create `
+  --resource-group dpcrobos `
+  --nsg-name VMrobodpc-nsg `
+  --name Allow-VNC `
+  --priority 1040 `
+  --source-address-prefixes '*' `
+  --destination-port-ranges 5900 `
+  --access Allow `
+  --protocol Tcp `
+  --direction Inbound `
+  --description "Permitir VNC"
+
+  #VMrobodpc-nsg nome do NSG associado à VM individual, não ao VMSS. Para o VMSS, associe o NSG à subnet.
+
 # 3. Associar NSG à Subnet
 az network vnet subnet update `
   --resource-group dpcrobos `
@@ -40,7 +55,7 @@ az network vnet subnet update `
   --network-security-group NSG-RoboDPC
 
 #********************* Essa é a mais próxima do sucesso até agora ******************************************
-# Depois crie o VMSS referenciando essa VNet 
+# Depois crie o VMSS referenciando essa VNet  (Standard_F4s_v2 ou Standard_D2s_v3)
 az vmss create `
   --resource-group dpcrobos `
   --name VMSSRoboDPC1 `
@@ -69,11 +84,12 @@ az vmss create `
   --name VMSSRoboDPC `
   --orchestration-mode Uniform `
   --computer-name-prefix VMRoboDPC `
-  --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/robodpc/images/robodpcVMI/versions/1.0.0" `
-  --instance-count 2 `
+  --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/robodpc/images/robodpcVMI/versions/2.0.0" `
+  --instance-count 3 `
   --vm-sku Standard_D2s_v3 `
   --priority Spot `
   --eviction-policy Delete `
+  --max-price -1 `
   --public-ip-per-vm `
   --storage-sku StandardSSD_LRS `
   --vnet-name VNet-RoboDPC `
@@ -85,7 +101,49 @@ az vmss create `
   --enable-secure-boot true `
   --upgrade-policy-mode Manual
 
+# 1. Capturar nova imagem (na máquina local, não na VM)
+az vm deallocate --resource-group dpcrobos --name VMrobodpc
 
+# Se quiser generalizar (opcional):
+# az vm generalize --resource-group dpcrobos --name VMrobodpc
+
+# Criar versão da imagem
+az sig image-version create `
+  --resource-group dpcrobos `
+  --gallery-name robodpc `
+  --gallery-image-definition robodpcVMI `
+  --gallery-image-version 2.0.0 `
+  --managed-image /subscriptions/.../VMrobodpc
+
+# 2. Criar VMSS com a nova imagem
+az vmss create `
+  --resource-group dpcrobos `
+  --name VMSSRoboDPC_ `
+  --orchestration-mode Flexible `
+  --image "/subscriptions/.../versions/2.0.0" `
+  --instance-count 2 `
+  --vm-sku Standard_D2s_v3 `
+  --priority Spot `
+  --eviction-policy Delete `
+  --public-ip-per-vm `
+  --storage-sku StandardSSD_LRS `
+  --vnet-name VNet-RoboDPC `
+  --subnet Subnet-RoboDPC `
+  --admin-username robodpc `
+  --admin-password "robodpc2025#" `
+  --specialized `
+  --security-type TrustedLaunch `
+  --enable-vtpm true `
+  --enable-secure-boot true
+
+
+
+
+
+
+
+
+  
 # SCRIPT DURANTE CRIACAO
 $customScript = @'
 #ps1_sysnative

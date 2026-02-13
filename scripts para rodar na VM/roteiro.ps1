@@ -1,15 +1,23 @@
-# 1. Execute o script de configuração
-.\configure-vm-image.ps1
+instalar node
+instalar chrome
 
-# 2. AJUSTE o caminho do seu script Node no startup-master.ps1
-# Edite: C:\Scripts\startup-master.ps1
-# Linha: $scriptPath = "C:\dpc\dpc-interno-rep\SEU-SCRIPT.js"
+# Salvar o script
+notepad C:\setup-complete-vm.ps1
 
-# 3. Reinicie e teste
-Restart-Computer
+# Colar o conteúdo acima
 
-# 4. Após reiniciar, verifique os logs
-Get-Content C:\logs\startup-master-*.log -Tail 50
+# Executar
+cd C:\
+.\setup-complete-vm.ps1
 
-# 5. Se tudo estiver OK, capture a imagem
-# (NÃO execute sysprep se quiser imagem especializada)
+# OU com parâmetros customizados:
+.\setup-complete-vm.ps1 -UserName "meuuser" -UserPassword "MinhaS3nh@" -VncPassword "VNC123" -NodeScriptPath "C:\meu\app\server.js"
+
+# Ver log de instalação
+Get-Content C:\logs\setup-complete-vm.log
+
+# Ver log de startup
+Get-Content C:\logs\startup-master-*.log | Select-Object -Last 100
+
+# Ver logs do Node em tempo real
+Get-Content C:\logs\node\output-$(Get-Date -Format 'yyyyMMdd').log -Wait -Tail 50
