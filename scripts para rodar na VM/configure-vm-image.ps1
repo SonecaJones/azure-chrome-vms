@@ -359,12 +359,13 @@ if (Test-Path `$scriptPath) {
         Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
         
-        `$node = Start-Process node ``
-            -ArgumentList `$scriptPath ``
-            -RedirectStandardOutput `$outputLog ``
-            -RedirectStandardError `$errorLog ``
+        # NOVA FORMA: Abrir Node em janela CMD visível
+        `$nodeCommand = "node `$scriptPath` 2>&1 | Tee-Object -FilePath `$outputLog` -Append" ``
+        
+        `$node = Start-Process cmd.exe ``
+            -ArgumentList "/k cd /d `$scriptDir` && set AZURE_VM_NAME=`$vmName` && set AZURE_VM_ID=`$vmId` && node `$scriptPath`" ``
             -PassThru ``
-            -WindowStyle Hidden
+            -WindowStyle Normal`
         
         Write-Host "Node PID: `$(`$node.Id)"
         Write-Host "Output: `$outputLog"
