@@ -307,31 +307,6 @@ if (`$vncService) {
     }
 }
 
-# Iniciar Chrome
-Write-Host "Iniciando Chrome..."
-`$chromeExe = "C:\Program Files\Google\Chrome\Application\chrome.exe"
-if (Test-Path `$chromeExe) {
-    try {
-        # Matar processos Chrome antigos
-        Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
-        
-        `$chrome = Start-Process `$chromeExe ``
-            -ArgumentList "--remote-debugging-port=9222","--user-data-dir=C:\chrome-debug-profile","--no-first-run","--no-default-browser-check","--disable-popup-blocking" ``
-            -PassThru ``
-            -WindowStyle Normal
-        
-        Write-Host "Chrome PID: `$(`$chrome.Id)"
-        Start-Sleep -Seconds 10
-        
-        if (Get-Process -Id `$chrome.Id -ErrorAction SilentlyContinue) {
-            Write-Host "Chrome rodando"
-        }
-    } catch {
-        Write-Host "Erro ao iniciar Chrome: `$_"
-    }
-}
-
 # Iniciar Node.js
 Write-Host "Iniciando Node.js..."
 `$scriptPath = "$NodeScriptPath"

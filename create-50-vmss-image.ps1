@@ -1,3 +1,84 @@
+# 1. Capturar nova imagem (na máquina local, não na VM)
+az vm deallocate --resource-group dpcrobos --name VMrobodpc
+
+# Se quiser generalizar (opcional):
+# az vm generalize --resource-group dpcrobos --name VMrobodpc
+
+# 1. Verificar se a Gallery existe
+az sig list --resource-group dpcrobos --output table
+
+# Se não existir, crie:
+az sig create `
+  --resource-group dpcrobos `
+  --gallery-name robodpc `
+  --location brazilsouth
+
+# 2. Criar Image Definition
+az sig image-definition create `
+  --resource-group dpcrobos `
+  --gallery-name robodpc `
+  --gallery-image-definition robodpcVMI `
+  --publisher RoboDPC `
+  --offer WindowsServer `
+  --sku 2022-Datacenter `
+  --os-type Windows `
+  --os-state Specialized `
+  --hyper-v-generation V2 `
+  --features SecurityType=TrustedLaunch `
+  --location brazilsouth
+
+# 3. Agora criar a versão da imagem
+# Primeiro, pegue o ID completo da VM:
+# Listar VMs
+az vm list --resource-group dpcrobos --output table
+
+# Pegar ID completo da VM
+az vm show --resource-group dpcrobos --name VMrobodpc --query id -o tsv
+
+# Criar versão da imagem
+# Substitua pelo ID completo da VM
+$vmId = "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/virtualMachines/VMrobodpc"
+
+az sig image-version create `
+  --resource-group dpcrobos `
+  --gallery-name robodpc `
+  --gallery-image-definition robodpcVMI `
+  --gallery-image-version 2.0.0 `
+  --virtual-machine $vmId `
+  --target-regions brazilsouth `
+  --storage-account-type Standard_LRS `
+  --replica-count 1
+
+# Ao criar a imagem, especificar storage account type
+az sig image-version create `
+  --storage-account-type Standard_LRS `  # HDD U$D 2,00 por mês, StandardSSD_LRS para SSD U$D 3,0 por mês
+  # ... outros parâmetros
+
+# Verificar progresso
+az sig image-version show `
+  --resource-group dpcrobos `
+  --gallery-name robodpc `
+  --gallery-image-definition robodpcVMI `
+  --gallery-image-version 2.0.0 `
+  --query "{State:provisioningState, Progress:publishingProfile.targetRegions[0].regionalReplicaCount}"
+
+az sig image-version list `
+  --resource-group dpcrobos `
+  --gallery-name robodpc `
+  --gallery-image-definition robodpcVMI `
+  --output table
+
+#localizar a imagem
+az sig image-definition list -g dpcrobos --gallery-name robodpc -o table  
+
+az sig image-version show `
+   --resource-group dpcrobos `
+   --gallery-name robodpc `
+   --gallery-image-definition robodpcVMI `
+   --gallery-image-version 2.0.0 `
+   --query id -o tsv
+
+
 #opcao com VNet
 # Primeiro, crie uma VNet e Subnet
 az network vnet create `
@@ -35,7 +116,7 @@ az network nsg rule create `
 # Adicionar regra NSG para porta 5900 (VNC)
 az network nsg rule create `
   --resource-group dpcrobos `
-  --nsg-name VMrobodpc-nsg `
+  --nsg-name NSG-RoboDPC `
   --name Allow-VNC `
   --priority 1040 `
   --source-address-prefixes '*' `
@@ -77,16 +158,14 @@ az vmss create `
   --enable-secure-boot true
 
 
-  # *********** dando erro de imagem especializada em modo UNIFORM **************
 #MODO UNIFORM PARA IDS SEQUENCIAIS
 az vmss create `
   --resource-group dpcrobos `
   --name VMSSRoboDPC `
   --orchestration-mode Uniform `
-  --computer-name-prefix VMRoboDPC `
   --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/robodpc/images/robodpcVMI/versions/2.0.0" `
-  --instance-count 3 `
-  --vm-sku Standard_D2s_v3 `
+  --instance-count 1 `
+  --vm-sku Standard_F4s_v2 `
   --priority Spot `
   --eviction-policy Delete `
   --max-price -1 `
@@ -94,48 +173,11 @@ az vmss create `
   --storage-sku StandardSSD_LRS `
   --vnet-name VNet-RoboDPC `
   --subnet Subnet-RoboDPC `
-  --admin-username robodpc `
-  --admin-password "robodpc2025#" `
   --security-type TrustedLaunch `
   --enable-vtpm true `
   --enable-secure-boot true `
-  --upgrade-policy-mode Manual
-
-# 1. Capturar nova imagem (na máquina local, não na VM)
-az vm deallocate --resource-group dpcrobos --name VMrobodpc
-
-# Se quiser generalizar (opcional):
-# az vm generalize --resource-group dpcrobos --name VMrobodpc
-
-# Criar versão da imagem
-az sig image-version create `
-  --resource-group dpcrobos `
-  --gallery-name robodpc `
-  --gallery-image-definition robodpcVMI `
-  --gallery-image-version 2.0.0 `
-  --managed-image /subscriptions/.../VMrobodpc
-
-# 2. Criar VMSS com a nova imagem
-az vmss create `
-  --resource-group dpcrobos `
-  --name VMSSRoboDPC_ `
-  --orchestration-mode Flexible `
-  --image "/subscriptions/.../versions/2.0.0" `
-  --instance-count 2 `
-  --vm-sku Standard_D2s_v3 `
-  --priority Spot `
-  --eviction-policy Delete `
-  --public-ip-per-vm `
-  --storage-sku StandardSSD_LRS `
-  --vnet-name VNet-RoboDPC `
-  --subnet Subnet-RoboDPC `
-  --admin-username robodpc `
-  --admin-password "robodpc2025#" `
-  --specialized `
-  --security-type TrustedLaunch `
-  --enable-vtpm true `
-  --enable-secure-boot true
-
+  --upgrade-policy-mode Manual `
+  --specialized
 
 
 
@@ -228,19 +270,3 @@ Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force
 
 criar imagem da VM especializada, sem sysprep
-
-#localizar a imagem
-az sig image-definition list -g dpcrobos --gallery-name vmssrobodpc -o table  
-
-az sig image-version list `
-  --resource-group dpcrobos `
-  --gallery-name vmssrobodpc `
-  --gallery-image-definition vmrobodpcimg `
-  --output table
-
-az sig image-version show `
-   --resource-group dpcrobos `
-   --gallery-name vmssrobodpc `
-   --gallery-image-definition vmrobodpcimg `
-   --gallery-image-version 1.0.0 `
-   --query id -o tsv
