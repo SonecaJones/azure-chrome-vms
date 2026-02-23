@@ -136,14 +136,14 @@ az network vnet subnet update `
   --network-security-group NSG-RoboDPC
 
 #********************* Essa é a mais próxima do sucesso até agora ******************************************
-# Depois crie o VMSS referenciando essa VNet  (Standard_F4s_v2 ou Standard_D2s_v3)
+# Depois crie o VMSS referenciando essa VNet  (Standard_F4s_v2 ou Standard_F2s_v2 ou Standard_D2s_v3)
 az vmss create `
   --resource-group dpcrobos `
   --name VMSSRoboDPC1 `
   --orchestration-mode Flexible `
   --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/vmssrobodpc/images/vmrobodpcimg/versions/1.0.0" `
   --instance-count 1 `
-  --vm-sku Standard_D2s_v3 `
+  --vm-sku Standard_F2s_v2 `
   --priority Spot `
   --eviction-policy Delete `
   --public-ip-per-vm `
@@ -164,8 +164,8 @@ az vmss create `
   --name VMSSRoboDPC `
   --orchestration-mode Uniform `
   --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/robodpc/images/robodpcVMI/versions/2.0.0" `
-  --instance-count 1 `
-  --vm-sku Standard_F4s_v2 `
+  --instance-count 68 `
+  --vm-sku Standard_F2s_v2 `
   --priority Spot `
   --eviction-policy Delete `
   --max-price -1 `
