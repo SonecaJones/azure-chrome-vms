@@ -126,7 +126,21 @@ az network nsg rule create `
   --direction Inbound `
   --description "Permitir VNC"
 
-  #VMrobodpc-nsg nome do NSG associado à VM individual, não ao VMSS. Para o VMSS, associe o NSG à subnet.
+
+# Adicionar regra NSG para porta 3000 (WS WATCHER)
+az network nsg rule create `
+  --resource-group dpcrobos `
+  --nsg-name NSG-RoboDPC `
+  --name Allow-WATCHER `
+  --priority 1050 `
+  --source-address-prefixes '*' `
+  --destination-port-ranges 3000 `
+  --access Allow `
+  --protocol Tcp `
+  --direction Inbound `
+  --description "WS WATCHER"
+
+#VMrobodpc-nsg nome do NSG associado à VM individual, não ao VMSS. Para o VMSS, associe o NSG à subnet.
 
 # 3. Associar NSG à Subnet
 az network vnet subnet update `

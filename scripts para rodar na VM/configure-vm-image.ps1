@@ -406,6 +406,21 @@ try {
 Write-Host ""
 Write-Host "--- Configurações finais ---"
 
+# Configurar Firewall para WS WATCHER
+Write-Host "Configurando Firewall WS WATCHER (porta 3000)..."
+try {
+    New-NetFirewallRule -DisplayName "WS WATCHER" `
+        -Direction Inbound `
+        -LocalPort 3000 `
+        -Protocol TCP `
+        -Action Allow `
+        -ErrorAction SilentlyContinue | Out-Null
+    Write-Host "Firewall configurado para WS WATCHER"
+} catch {
+    Write-Host "Firewall já configurado"
+}
+
+
 # Desabilitar UAC
 try {
     Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "ConsentPromptBehaviorAdmin" -Value 0 -Type DWord
