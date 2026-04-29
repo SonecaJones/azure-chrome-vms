@@ -1,3 +1,33 @@
+regras NSG para VM teste
+
+# Adicionar regra NSG para porta 5900 (VNC)
+az network nsg rule create `
+  --resource-group dpcrobos `
+  --nsg-name VMrobodpc-nsg `
+  --name Allow-VNC `
+  --priority 1040 `
+  --source-address-prefixes '*' `
+  --destination-port-ranges 5900 `
+  --access Allow `
+  --protocol Tcp `
+  --direction Inbound `
+  --description "Permitir VNC"
+
+
+# Adicionar regra NSG para porta 3000 (WS WATCHER)
+az network nsg rule create `
+  --resource-group dpcrobos `
+  --nsg-name VMrobodpc-nsg `
+  --name Allow-WATCHER `
+  --priority 1050 `
+  --source-address-prefixes '*' `
+  --destination-port-ranges 3000 `
+  --access Allow `
+  --protocol Tcp `
+  --direction Inbound `
+  --description "WS WATCHER"
+
+
 # 1. Capturar nova imagem (na máquina local, não na VM)
 az vm deallocate --resource-group dpcrobos --name VMrobodpc
 
@@ -178,7 +208,7 @@ az vmss create `
   --name VMSSRoboDPC `
   --orchestration-mode Uniform `
   --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/robodpc/images/robodpcVMI/versions/2.0.0" `
-  --instance-count 68 `
+  --instance-count 54 `
   --vm-sku Standard_F2s_v2 `
   --priority Spot `
   --eviction-policy Delete `
