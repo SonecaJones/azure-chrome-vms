@@ -226,7 +226,20 @@ az vmss create `
 
 
 
+ # Habilita System-assigned Managed Identity no VMSS
+ az vmss identity assign `
+   --resource-group dpcrobos `
+   --name VMSSRoboDPC
 
+ # Obtém o principal ID retornado pelo comando acima
+ $principalId = (az vmss identity show --resource-group dpcrobos --name VMSSRoboDPC | ConvertFrom-Json).principalId
+
+ # Atribui permissão de deletar instâncias na própria VMSS
+ az role assignment create `
+   --assignee $principalId `
+   --role "Virtual Machine Contributor" `
+   --scope "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute
+ /virtualMachineScaleSets/VMSSRoboDPC"
 
 
   
