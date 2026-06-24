@@ -1,4 +1,4 @@
-regras NSG para VM teste
+# Criar regras NSG para VM teste
 
 # Adicionar regra NSG para porta 5900 (VNC)
 az network nsg rule create `
@@ -208,7 +208,7 @@ az vmss create `
   --name VMSSRoboDPC `
   --orchestration-mode Uniform `
   --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/robodpc/images/robodpcVMI/versions/2.0.0" `
-  --instance-count 54 `
+  --instance-count 24 `
   --vm-sku Standard_F2s_v2 `
   --priority Spot `
   --eviction-policy Delete `
