@@ -76,12 +76,12 @@ az sig image-version create `
   --gallery-image-version 2.0.0 `
   --virtual-machine $vmId `
   --target-regions brazilsouth `
-  --storage-account-type Standard_LRS `
+  --storage-account-type StandardSSD_LRS `
   --replica-count 1
 
 # Ao criar a imagem, especificar storage account type
 az sig image-version create `
-  --storage-account-type Standard_LRS `  # HDD U$D 2,00 por mês, StandardSSD_LRS para SSD U$D 3,0 por mês
+  --storage-account-type Standard_LRS `  # Standard_LRS para HDD U$D 2,00 por mês, StandardSSD_LRS para SSD U$D 3,0 por mês
   # ... outros parâmetros
 
 # Verificar progresso
@@ -208,7 +208,7 @@ az vmss create `
   --name VMSSRoboDPC `
   --orchestration-mode Uniform `
   --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/robodpc/images/robodpcVMI/versions/2.0.0" `
-  --instance-count 24 `
+  --instance-count 37 `
   --vm-sku Standard_F2s_v2 `
   --priority Spot `
   --eviction-policy Delete `
