@@ -324,27 +324,34 @@ if (Test-Path `$scriptPath) {
     New-Item -ItemType Directory -Force -Path `$logsDir | Out-Null
     
     `$logDate = Get-Date -Format 'yyyyMMdd'
-    `$outputLog = "`$logsDir\output-`$logDate.log"
-    `$errorLog = "`$logsDir\errors-`$logDate.log"
+    `$outputLog = "`$logsDir\bot-`$vmName-`$logDate.log"
     
     "``n========== VM: `$vmName - Iniciado em `$(Get-Date) ==========" | Add-Content `$outputLog
+    # Ponteiro para o log corrente: o coletor le daqui em vez de adivinhar data/nome
+    `$outputLog | Set-Content "`$logsDir\bot-atual.txt"
     
     try {
         # Matar processos Node antigos
         Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
         
-        # NOVA FORMA: Abrir Node em janela CMD visível
-        `$nodeCommand = "node `$scriptPath` 2>&1 | Tee-Object -FilePath `$outputLog` -Append" ``
-        
+        # Node em janela CMD, com stdout+stderr REDIRECIONADOS para arquivo.
+        # O merge (2>&1) fica no cmd, NAO no PowerShell: no PS 5.1 stderr de comando
+        # nativo vira NativeCommandError e abortaria o startup nos avisos do Node.
+        # Arquivo (e nao pipe/Tee-Object) porque no Windows stdout para arquivo e
+        # escrita sincrona: a cauda do log sobrevive a uma queda do processo.
         `$node = Start-Process cmd.exe ``
-            -ArgumentList "/k cd /d `$scriptDir` && set AZURE_VM_NAME=`$vmName` && set AZURE_VM_ID=`$vmId` && node `$scriptPath`" ``
+            -ArgumentList "/k cd /d `$scriptDir && set AZURE_VM_NAME=`$vmName && set AZURE_VM_ID=`$vmId && node `$scriptPath >> ""`$outputLog"" 2>&1" ``
             -PassThru ``
-            -WindowStyle Normal`
+            -WindowStyle Normal
+        
+        # Janela so de acompanhamento por VNC — a fonte da verdade e o arquivo acima
+        Start-Process powershell.exe ``
+            -ArgumentList "-NoExit","-NoProfile","-ExecutionPolicy","Bypass","-Command","Get-Content -Path '`$outputLog' -Wait -Tail 50" ``
+            -WindowStyle Normal
         
         Write-Host "Node PID: `$(`$node.Id)"
-        Write-Host "Output: `$outputLog"
-        Write-Host "Errors: `$errorLog"
+        Write-Host "Log (stdout+stderr): `$outputLog"
         
         # Salvar PID
         `$node.Id | Set-Content "`$logsDir\node.pid"
@@ -367,7 +374,7 @@ Write-Host ""
 Write-Host "=== STARTUP CONCLUÍDO ==="
 Write-Host "Hostname: `$env:COMPUTERNAME"
 Write-Host "Chrome: Debug porta 9222"
-Write-Host 'Node.js: Logs em C:\logs\node\'
+Write-Host 'Node.js: Log em C:\logs\node\bot-<vm>-<data>.log (ponteiro: bot-atual.txt)'
 Write-Host "VNC: Porta 5900"
 
 Stop-Transcript

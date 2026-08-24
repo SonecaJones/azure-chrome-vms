@@ -31,5 +31,18 @@ Get-Content C:\logs\startup-master-*.log | Select-Object -Last 100
 # Aplicar pontualmente (idempotente; persiste via CDS_UPDATEREGISTRY):
 .\set-resolution.ps1
 
-# Ver logs do Node em tempo real
-Get-Content C:\logs\node\output-$(Get-Date -Format 'yyyyMMdd').log -Wait -Tail 50
+# --- LOGS DO BOT ---
+# O startup-master.ps1 redireciona stdout+stderr do node para arquivo e abre uma 2a janela
+# so de acompanhamento. O nome do log leva a VM (o antigo output-<data>.log era so por data,
+# e na pratica ficava vazio: o redirecionamento estava montado numa variavel que ninguem usava).
+
+# Ver o log corrente em tempo real (o ponteiro evita adivinhar data/nome):
+Get-Content (Get-Content C:\logs\node\bot-atual.txt) -Wait -Tail 50
+
+# Ou pelo nome completo:
+Get-Content C:\logs\node\bot-$env:COMPUTERNAME-$(Get-Date -Format 'yyyyMMdd').log -Wait -Tail 50
+
+# --- BAIXAR OS LOGS DA FROTA INTEIRA (roda no notebook, nao na VM) ---
+# Depois da tentativa e ANTES de desligar/derrubar as VMs (run-command exige VM ligada):
+#   cd ..\ ; .\coletar-logs-vmss.ps1 -DryRun          # so lista o alcance
+#   .\coletar-logs-vmss.ps1 -Desde 20260824           # coleta de verdade
