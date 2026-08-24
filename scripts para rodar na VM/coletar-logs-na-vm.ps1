@@ -70,6 +70,7 @@ if ($Desde) {
 $raiz = $BaseLogs.TrimEnd('\')
 $padroes = @(
     @{ p = "$raiz\node\bot-*.log";        sempre = $false },
+    @{ p = "$raiz\node\supervisor-*.log"; sempre = $false },   # reinicios do bot (bot-supervisor.ps1)
     @{ p = "$raiz\node\output-*.log";     sempre = $false },   # legado (imagem pre-S1)
     @{ p = "$raiz\node\errors-*.log";     sempre = $false },   # legado (nunca chegou a existir)
     @{ p = "$raiz\node\node.pid";         sempre = $true  },

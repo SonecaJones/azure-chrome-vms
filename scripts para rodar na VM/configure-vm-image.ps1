@@ -8,7 +8,10 @@ param(
     [string]$UserName = "robodpc",
     [string]$UserPassword = "robodpc2025#",
     [string]$VncPassword = "RoboVNC2025",
-    [string]$NodeScriptPath = "C:\dpc\dpc-interno-rep\index.js"
+    [string]$NodeScriptPath = "C:\dpc\dpc-interno-rep\index.js",
+    # Rollback: gera a imagem SEM o laco de supervisao (o bot sobe uma vez por boot, como antes).
+    # O bot-supervisor.ps1 continua sendo criado, mas e chamado com -SemLaco.
+    [switch]$SemSupervisor
 )
 
 $ErrorActionPreference = "Continue"
@@ -223,6 +226,193 @@ Stop-Transcript
 Set-Content -Path "C:\Scripts\ensure-gui-session.ps1" -Value $ensureGuiScript
 Write-Host "Script GUI criado"
 
+# -SemSupervisor gera a imagem no formato antigo: o bot sobe uma vez, sem laco de vigilancia.
+$argSupervisor = if ($SemSupervisor) { " -SemLaco" } else { "" }
+
+# Script 3: bot-supervisor.ps1
+# Here-string LITERAL (@'...'@): nada e interpolado na geracao, entao nao ha backtick para escapar
+# - que e a maior fonte de erro deste arquivo. Tudo o que varia entra por parametro.
+$botSupervisorScript = @'
+# bot-supervisor.ps1 - sobe o bot e o mantem no ar.
+#
+# POR QUE EXISTE: nao havia supervisor de processo. O startup-master subia o node UMA vez por boot,
+# entao um processo que morresse deixava a VM fora ate reboot manual - e ninguem percebia no dia D.
+# Neste projeto encerrar e sempre o pior desfecho, entao o laco NUNCA desiste: so espaca as
+# tentativas com backoff.
+#
+# TRES ARMADILHAS que este script existe para nao repetir:
+#
+#  1. Start-Process cmd.exe -PassThru devolve o PID do CMD, e o /k mantem o cmd VIVO depois que o
+#     node morre. Vigiar esse PID diria "saudavel" para sempre. Por isso Get-BotPid resolve o
+#     processo FILHO (Win32_Process/ParentProcessId) - e e esse PID que vai para o node.pid.
+#  2. O nome do log carrega a data e e fixado no >> do start. Cada restart reavalia a data e
+#     reaponta o bot-atual.txt, senao o log vira em silencio na meia-noite.
+#  3. Matar node incondicionalmente derruba um bot SAUDAVEL quando o script roda de novo (por
+#     az vmss run-command, ou um segundo disparo da Startup). Aqui um node vivo e ADOTADO - o que
+#     torna seguro reexecutar o startup-master como watchdog-do-watchdog.
+#
+# O CHROME NAO E TOCADO no restart: o node morto deixa o Chrome na 9222 com o perfil aquecido, e o
+# abreDPC reconecta nele preservando o cf_clearance. Matar o Chrome jogaria fora exatamente o
+# aquecimento que o resto do projeto protege.
+#
+# KILL-SWITCH sem re-bake: criar C:\Scripts\supervisor.off (via az vmss run-command) faz o laco
+# sair SEM derrubar o bot.
+param(
+  [string]$ScriptPath  = "C:\dpc\dpc-interno-rep\index.js",
+  [string]$VmName      = $env:COMPUTERNAME,
+  [string]$VmId        = "unknown",
+  [string]$LogsDir     = "C:\logs\node",
+  [int]   $IntervaloS  = 10,    # cadencia da vigilancia
+  [int]   $EsperaBaseS = 5,     # backoff inicial (curto: restart na janela critica ja custa caro)
+  [int]   $EsperaMaxS  = 300,   # teto do backoff - freio contra loop rapido, nao desistencia
+  [int]   $SaudavelS   = 300,   # node vivo por este tempo zera o contador de reinicios
+  [string]$ProcNome    = "node.exe",  # hook de teste: exercitar o laco com outro processo
+  [string]$Sentinela   = "C:\Scripts\supervisor.off",  # kill-switch: existe -> para de vigiar
+  [switch]$SemTail,                   # nao abre a janela de acompanhamento (headless/teste)
+  [switch]$SemLaco,                   # rollback: sobe o bot e sai (comportamento antigo)
+  [switch]$UmaVolta                   # hook de teste: uma iteracao e sai
+)
+
+$ErrorActionPreference = "Continue"
+
+function Log-Sup($msg) {
+    $ts = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    Write-Host "[SUPERVISOR] $msg"
+    # Recalculado a cada chamada: o arquivo acompanha a virada de data.
+    $arq = "$LogsDir\supervisor-$VmName-$(Get-Date -Format 'yyyyMMdd').log"
+    try { "$ts [SUPERVISOR] $msg" | Add-Content $arq } catch { }
+}
+
+function Get-BotPid($cmdPid) {
+    # O node e FILHO do cmd. Sem resolver o filho, o supervisor vigiaria o cmd (que nunca morre).
+    for ($i = 0; $i -lt 15; $i++) {
+        $p = Get-CimInstance Win32_Process -Filter "ParentProcessId=$cmdPid" -ErrorAction SilentlyContinue |
+             Where-Object { $_.Name -eq $ProcNome } | Select-Object -First 1
+        if ($p) { return [int]$p.ProcessId }
+        Start-Sleep -Seconds 1
+    }
+    return 0
+}
+
+function Vivo($processId) {
+    if (-not $processId) { return $false }
+    return [bool](Get-Process -Id $processId -ErrorAction SilentlyContinue)
+}
+
+function Sobe-Bot {
+    $scriptDir = Split-Path -Parent $ScriptPath
+    Set-Location $scriptDir
+    $env:AZURE_VM_NAME = $VmName
+    $env:AZURE_VM_ID = $VmId
+    $env:NODE_ENV = "production"
+    New-Item -ItemType Directory -Force -Path $LogsDir | Out-Null
+
+    $vmName = $VmName
+    $vmId = $VmId
+    $logsDir = $LogsDir
+    $scriptPath = $ScriptPath
+    $logDate = Get-Date -Format 'yyyyMMdd'
+    $outputLog = "$logsDir\bot-$vmName-$logDate.log"
+
+    "`n========== VM: $vmName - Iniciado em $(Get-Date) ==========" | Add-Content $outputLog
+    # Ponteiro para o log corrente: o coletor le daqui em vez de adivinhar data/nome.
+    $outputLog | Set-Content "$logsDir\bot-atual.txt"
+
+    # Node em janela CMD, com stdout+stderr REDIRECIONADOS para arquivo.
+    # O merge (2>&1) fica no cmd, NAO no PowerShell: no PS 5.1 stderr de comando nativo vira
+    # NativeCommandError e abortaria o startup nos proprios avisos do Node.
+    # Arquivo (e nao pipe/Tee-Object) porque no Windows stdout para arquivo e escrita sincrona:
+    # a cauda do log sobrevive a uma queda do processo.
+    $cmd = Start-Process cmd.exe `
+        -ArgumentList "/k cd /d $scriptDir && set AZURE_VM_NAME=$vmName && set AZURE_VM_ID=$vmId && node $scriptPath >> ""$outputLog"" 2>&1" `
+        -PassThru `
+        -WindowStyle Normal
+
+    $botPid = Get-BotPid $cmd.Id
+    if ($botPid) { $botPid | Set-Content "$logsDir\node.pid" }
+    Log-Sup "bot iniciado: cmd=$($cmd.Id) node=$botPid log=$outputLog"
+    return @{ CmdPid = $cmd.Id; BotPid = $botPid; Log = $outputLog; Inicio = Get-Date }
+}
+
+function Sobe-Tail($outputLog) {
+    # Janela so de acompanhamento por VNC - a fonte da verdade e o arquivo.
+    $t = Start-Process powershell.exe `
+        -ArgumentList "-NoExit","-NoProfile","-ExecutionPolicy","Bypass","-Command","Get-Content -Path '$outputLog' -Wait -Tail 50" `
+        -PassThru `
+        -WindowStyle Normal
+    return $t.Id
+}
+
+# --- adocao: nunca derrubar um node saudavel ---------------------------------------------------
+$nomeProc = $ProcNome -replace '\.exe$', ''
+$existente = Get-Process $nomeProc -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($existente) {
+    $logAtual = ""
+    try { $logAtual = (Get-Content "$LogsDir\bot-atual.txt" -ErrorAction SilentlyContinue | Select-Object -First 1) } catch { }
+    Log-Sup "adotando processo ja em execucao (pid $($existente.Id)); nao reinicia"
+    $estado = @{ CmdPid = 0; BotPid = $existente.Id; Log = $logAtual; Inicio = Get-Date }
+} else {
+    $estado = Sobe-Bot
+}
+
+$tailPid = 0
+if ($estado.Log -and -not $SemTail) { $tailPid = Sobe-Tail $estado.Log }
+
+if ($SemLaco) {
+    Log-Sup "-SemLaco: bot iniciado sem supervisao (comportamento antigo)."
+    return
+}
+
+$falhas = 0
+$tailFalhas = 0
+Log-Sup "supervisao ativa (intervalo ${IntervaloS}s, backoff ${EsperaBaseS}-${EsperaMaxS}s)"
+
+while ($true) {
+    Start-Sleep -Seconds $IntervaloS
+    try {
+        if (Test-Path $Sentinela) {
+            Log-Sup "sentinela $Sentinela presente: supervisao DESLIGADA (o bot segue rodando)"
+            break
+        }
+
+        if (Vivo $estado.BotPid) {
+            if ($falhas -gt 0 -and ((Get-Date) - $estado.Inicio).TotalSeconds -ge $SaudavelS) {
+                # Reinicios sao falhas CONSECUTIVAS, nao a vida da VM - mesmo padrao de
+                # tentInplace/falhasCloudflare/recuperacoesConsecutivas no bot.
+                Log-Sup "node estavel ha ${SaudavelS}s; zerando contador de reinicios ($falhas)"
+                $falhas = 0
+            }
+            if ($estado.Log -and -not $SemTail -and -not (Vivo $tailPid) -and $tailFalhas -lt 5) {
+                $tailPid = Sobe-Tail $estado.Log
+                $tailFalhas++
+            }
+        } else {
+            $falhas++
+            # A janela do cmd (/k) sobrevive ao node: fechar a orfa antes de reabrir.
+            if ($estado.CmdPid -and (Vivo $estado.CmdPid)) {
+                Stop-Process -Id $estado.CmdPid -Force -ErrorAction SilentlyContinue
+            }
+            $espera = [math]::Min($EsperaBaseS * [math]::Pow(2, $falhas - 1), $EsperaMaxS)
+            Log-Sup "node ausente (reinicio #$falhas). Aguardando ${espera}s..."
+            Start-Sleep -Seconds $espera
+
+            $anterior = $estado.Log
+            $estado = Sobe-Bot
+            if ($estado.Log -ne $anterior -and -not $SemTail) {
+                if (Vivo $tailPid) { Stop-Process -Id $tailPid -Force -ErrorAction SilentlyContinue }
+                $tailPid = Sobe-Tail $estado.Log
+                $tailFalhas = 0
+            }
+        }
+    } catch {
+        Log-Sup "erro no laco (ignorado): $_"
+    }
+    if ($UmaVolta) { break }
+}
+'@
+Set-Content -Path "C:\Scripts\bot-supervisor.ps1" -Value $botSupervisorScript
+Write-Host "Script supervisor criado"
+
 # Script 2: startup-master.ps1
 $startupMasterScript = @"
 Start-Transcript -Path "C:\logs\startup-master-`$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
@@ -230,6 +420,16 @@ Write-Host "=== STARTUP MASTER ==="
 Write-Host "Usuario: `$env:USERNAME"
 Write-Host "Data: `$(Get-Date)"
 Write-Host "Hostname: `$env:COMPUTERNAME"
+
+# Guarda de instancia unica: um segundo disparo da Startup (ou um `az vmss run-command` de
+# emergencia) nao pode virar dois supervisores brigando pelo mesmo bot. Quem chegou depois sai.
+`$outrosStartup = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { `$_.ProcessId -ne `$PID -and `$_.CommandLine -like '*startup-master.ps1*' })
+if (`$outrosStartup.Count -gt 0) {
+    Write-Host "startup-master ja em execucao (PID `$(`$outrosStartup[0].ProcessId)); saindo sem tocar no bot."
+    Stop-Transcript
+    exit 0
+}
 
 # Garantir GUI
 & "C:\Scripts\ensure-gui-session.ps1"
@@ -307,67 +507,16 @@ if (`$vncService) {
     }
 }
 
-# Iniciar Node.js
-Write-Host "Iniciando Node.js..."
-`$scriptPath = "$NodeScriptPath"
-if (Test-Path `$scriptPath) {
-    `$scriptDir = Split-Path -Parent `$scriptPath
-    Set-Location `$scriptDir
-    
-    # Variáveis de ambiente
-    `$env:AZURE_VM_NAME = `$vmName
-    `$env:AZURE_VM_ID = `$vmId
-    `$env:NODE_ENV = "production"
-    
-    # Logs
-    `$logsDir = "C:\logs\node"
-    New-Item -ItemType Directory -Force -Path `$logsDir | Out-Null
-    
-    `$logDate = Get-Date -Format 'yyyyMMdd'
-    `$outputLog = "`$logsDir\bot-`$vmName-`$logDate.log"
-    
-    "``n========== VM: `$vmName - Iniciado em `$(Get-Date) ==========" | Add-Content `$outputLog
-    # Ponteiro para o log corrente: o coletor le daqui em vez de adivinhar data/nome
-    `$outputLog | Set-Content "`$logsDir\bot-atual.txt"
-    
-    try {
-        # Matar processos Node antigos
-        Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
-        
-        # Node em janela CMD, com stdout+stderr REDIRECIONADOS para arquivo.
-        # O merge (2>&1) fica no cmd, NAO no PowerShell: no PS 5.1 stderr de comando
-        # nativo vira NativeCommandError e abortaria o startup nos avisos do Node.
-        # Arquivo (e nao pipe/Tee-Object) porque no Windows stdout para arquivo e
-        # escrita sincrona: a cauda do log sobrevive a uma queda do processo.
-        `$node = Start-Process cmd.exe ``
-            -ArgumentList "/k cd /d `$scriptDir && set AZURE_VM_NAME=`$vmName && set AZURE_VM_ID=`$vmId && node `$scriptPath >> ""`$outputLog"" 2>&1" ``
-            -PassThru ``
-            -WindowStyle Normal
-        
-        # Janela so de acompanhamento por VNC — a fonte da verdade e o arquivo acima
-        Start-Process powershell.exe ``
-            -ArgumentList "-NoExit","-NoProfile","-ExecutionPolicy","Bypass","-Command","Get-Content -Path '`$outputLog' -Wait -Tail 50" ``
-            -WindowStyle Normal
-        
-        Write-Host "Node PID: `$(`$node.Id)"
-        Write-Host "Log (stdout+stderr): `$outputLog"
-        
-        # Salvar PID
-        `$node.Id | Set-Content "`$logsDir\node.pid"
-        
-        Start-Sleep -Seconds 5
-        
-        if (Get-Process -Id `$node.Id -ErrorAction SilentlyContinue) {
-            Write-Host "Node.js rodando"
-        }
-        
-    } catch {
-        Write-Host "Erro ao iniciar Node: `$_"
-    }
+# Iniciar o bot SOB SUPERVISAO.
+# Subir, vigiar e reiniciar ficam no bot-supervisor.ps1 — ele roda DENTRO deste processo, entao o
+# transcript segue capturando e a arvore de processos nao muda. Antes o node subia UMA vez por boot:
+# se o processo morresse, a VM ficava fora ate reboot manual e ninguem percebia no dia D.
+`$supervisor = "C:\Scripts\bot-supervisor.ps1"
+if (Test-Path `$supervisor) {
+    & `$supervisor -ScriptPath "$NodeScriptPath" -VmName `$vmName -VmId `$vmId$argSupervisor
 } else {
-    Write-Host "Script Node não encontrado: `$scriptPath"
-    Write-Host "AJUSTE: C:\Scripts\startup-master.ps1"
+    Write-Host "Supervisor nao encontrado: `$supervisor"
+    Write-Host "AJUSTE: C:\Scripts\bot-supervisor.ps1"
 }
 
 Write-Host ""
@@ -375,6 +524,7 @@ Write-Host "=== STARTUP CONCLUÍDO ==="
 Write-Host "Hostname: `$env:COMPUTERNAME"
 Write-Host "Chrome: Debug porta 9222"
 Write-Host 'Node.js: Log em C:\logs\node\bot-<vm>-<data>.log (ponteiro: bot-atual.txt)'
+Write-Host 'Supervisor: C:\logs\node\supervisor-<vm>-<data>.log (off: C:\Scripts\supervisor.off)'
 Write-Host "VNC: Porta 5900"
 
 Stop-Transcript

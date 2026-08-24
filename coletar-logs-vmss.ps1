@@ -296,16 +296,22 @@ foreach ($z in $zips) {
     catch { Write-Host "  [!!] falha ao descompactar $($z.Name): $_" -ForegroundColor Red }
 }
 
-# Conta as linhas do log do bot de cada VM (0 = VM sem log: imagem antiga, ou bot que nao subiu).
+# Conta as linhas do log do bot de cada VM (0 = VM sem log: imagem antiga, ou bot que nao subiu) e
+# quantas vezes o supervisor teve de reiniciar o bot (0 = a VM atravessou o dia sem cair).
 foreach ($r in $resultados) {
     $linhas = 0
+    $reinicios = 0
     if ($r.VmName) {
         $pasta = Join-Path $Destino (Join-Path $r.Vmss ($r.VmName -replace '[^A-Za-z0-9_.-]', '_'))
         Get-ChildItem -Path $pasta -Filter "bot-*.log" -ErrorAction SilentlyContinue | ForEach-Object {
             $linhas += @(Get-Content $_.FullName -ErrorAction SilentlyContinue).Count
         }
+        Get-ChildItem -Path $pasta -Filter "supervisor-*.log" -ErrorAction SilentlyContinue | ForEach-Object {
+            $reinicios += @(Select-String -Path $_.FullName -Pattern 'node ausente \(reinicio #' -ErrorAction SilentlyContinue).Count
+        }
     }
     $r | Add-Member -NotePropertyName LinhasLogBot -NotePropertyValue $linhas -Force
+    $r | Add-Member -NotePropertyName Reinicios -NotePropertyValue $reinicios -Force
 }
 
 # ------------------------------------------------------------------------------------------------
@@ -313,16 +319,17 @@ foreach ($r in $resultados) {
 # ------------------------------------------------------------------------------------------------
 Titulo "RESUMO"
 
-$resultados | Select-Object Vmss, Id, VmName, Arquivos, Bytes, LinhasLogBot, Upload |
+$resultados | Select-Object Vmss, Id, VmName, Arquivos, Bytes, LinhasLogBot, Reinicios, Upload |
     Sort-Object Vmss, Id | Format-Table -AutoSize
 
 $csv = Join-Path $Destino "_resumo.csv"
-$resultados | Select-Object Vmss, Id, VmName, Arquivos, Bytes, LinhasLogBot, Upload |
+$resultados | Select-Object Vmss, Id, VmName, Arquivos, Bytes, LinhasLogBot, Reinicios, Upload |
     Sort-Object Vmss, Id | Export-Csv -Path $csv -NoTypeInformation -Encoding UTF8
 
 $ok      = @($resultados | Where-Object { $_.Upload -eq 'OK' })
 $semLog  = @($ok | Where-Object { $_.LinhasLogBot -eq 0 })
 $falhou  = @($resultados | Where-Object { $_.Upload -ne 'OK' })
+$reiniciadas = @($ok | Where-Object { $_.Reinicios -gt 0 })
 
 Write-Host "Coletadas com sucesso : $($ok.Count) de $($resultados.Count)"
 Write-Host "Falharam              : $($falhou.Count)"
