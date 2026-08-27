@@ -33,7 +33,7 @@ param(
     [string]   $ResourceGroup = "dpcrobos",
     [string]   $Subscription  = "5c27bb8e-190b-4cf7-bd0e-c9dfca554525",
     # Mesma derivacao de nome usada em create-multiregion-vmss.ps1.
-    [string[]] $Regioes       = @("brazilsouth", "eastus2", "westus3"),
+    [string[]] $Regioes       = @("brazilsouth"),
     [string[]] $Vmss,                          # nomes explicitos; sobrepoe -Regioes
     [int[]]    $InstanceIds,                   # filtro de instancias (ensaio)
     [string]   $Destino,                       # default: .\coleta-logs\<yyyyMMdd-HHmmss>
@@ -97,7 +97,7 @@ $scriptTemp = Join-Path ([System.IO.Path]::GetTempPath()) ("coleta-vm-" + [guid]
 Copy-Item $scriptRemoto $scriptTemp -Force
 
 if (-not $Vmss) {
-    $Vmss = $Regioes | ForEach-Object { "VMSSRoboDPC-" + ($_ -replace '[^a-zA-Z0-9]', '') }
+    $Vmss = $Regioes | ForEach-Object { "VMSSRoboDPC"}
 }
 
 Write-Host "ResourceGroup: $ResourceGroup"

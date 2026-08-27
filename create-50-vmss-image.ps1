@@ -3,7 +3,7 @@
 # Adicionar regra NSG para porta 5900 (VNC)
 az network nsg rule create `
   --resource-group dpcrobos `
-  --nsg-name VMrobodpc-nsg `
+  --nsg-name VMSSRoboDPCNSG `
   --name Allow-VNC `
   --priority 1040 `
   --source-address-prefixes '*' `
@@ -17,7 +17,7 @@ az network nsg rule create `
 # Adicionar regra NSG para porta 3000 (WS WATCHER)
 az network nsg rule create `
   --resource-group dpcrobos `
-  --nsg-name VMrobodpc-nsg `
+  --nsg-name VMSSRoboDPCNSG `
   --name Allow-WATCHER `
   --priority 1050 `
   --source-address-prefixes '*' `
@@ -76,7 +76,7 @@ az sig image-version create `
   --gallery-image-version 2.0.0 `
   --virtual-machine $vmId `
   --target-regions brazilsouth `
-  --storage-account-type StandardSSD_LRS `
+  --storage-account-type Standard_LRS `
   --replica-count 1
 
 # Ao criar a imagem, especificar storage account type
@@ -179,7 +179,8 @@ az network vnet subnet update `
   --name Subnet-RoboDPC `
   --network-security-group NSG-RoboDPC
 
-#********************* Essa é a mais próxima do sucesso até agora ******************************************
+
+# *** modo base, nao estamos mais usando. usamos atualmente o modo UNIFORM ***
 # Depois crie o VMSS referenciando essa VNet  (Standard_F4s_v2 ou Standard_F2s_v2 ou Standard_D2s_v3)
 az vmss create `
   --resource-group dpcrobos `
@@ -201,14 +202,14 @@ az vmss create `
   --enable-vtpm true `
   --enable-secure-boot true
 
-
+# --------------------------------------------------------- USAR ESSE ---------------------------------------------------------
 #MODO UNIFORM PARA IDS SEQUENCIAIS
 az vmss create `
   --resource-group dpcrobos `
   --name VMSSRoboDPC `
   --orchestration-mode Uniform `
   --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/robodpc/images/robodpcVMI/versions/2.0.0" `
-  --instance-count 37 `
+  --instance-count 35 `
   --vm-sku Standard_F2s_v2 `
   --priority Spot `
   --eviction-policy Delete `
