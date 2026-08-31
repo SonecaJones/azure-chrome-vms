@@ -1,4 +1,10 @@
-# setup-complete-vm-uniform.ps1
+﻿# setup-complete-vm-uniform.ps1
+#
+# ESTE ARQUIVO PRECISA DO BOM UTF-8 (EF BB BF no offset 0). Ele roda em powershell.exe 5.1, que le
+# script SEM BOM como ANSI/CP1252: sem o BOM, "Pasta ja existe" e todo o texto acentuado das
+# here-strings chegam corrompidos ao motor E sao gravados assim dentro do startup-master.ps1 e do
+# ensure-gui-session.ps1 gerados. Perder o BOM num "salvar como" reintroduz o defeito em silencio -
+# ha assert em testa-startup-master.ps1. Pelo mesmo motivo os Set-Content abaixo gravam em UTF8.
 # SCRIPT COMPLETO OTIMIZADO PARA MODO UNIFORM
 # 1 usuário + autologon + VNC + Chrome + Node
 # Versão: 2.1 - Uniform Mode
@@ -223,7 +229,7 @@ Write-Host "Session ID: $((Get-Process -Id $PID).SessionId)"
 Write-Host "Usuario: $env:USERNAME"
 Stop-Transcript
 '@
-Set-Content -Path "C:\Scripts\ensure-gui-session.ps1" -Value $ensureGuiScript
+Set-Content -Path "C:\Scripts\ensure-gui-session.ps1" -Value $ensureGuiScript -Encoding UTF8
 Write-Host "Script GUI criado"
 
 # -SemSupervisor gera a imagem no formato antigo: o bot sobe uma vez, sem laco de vigilancia.
@@ -314,7 +320,12 @@ function Sobe-Bot {
     $logDate = Get-Date -Format 'yyyyMMdd'
     $outputLog = "$logsDir\bot-$vmName-$logDate.log"
 
-    "`n========== VM: $vmName - Iniciado em $(Get-Date) ==========" | Add-Content $outputLog
+    # -Encoding UTF8 poe o BOM no inicio do arquivo. O node grava UTF-8 puro logo depois (pelo >>
+    # do cmd), entao SEM o BOM qualquer Get-Content sem flag le em ANSI/CP1252 e mostra acento e
+    # box-drawing corrompidos. Com BOM todo leitor acerta sozinho (notepad, VS Code, o Get-Content
+    # digitado a mao por VNC). Em append e' seguro: o .NET so emite o preambulo com o stream na
+    # posicao 0, entao o restart no mesmo dia NAO injeta um segundo BOM no meio do log.
+    "`n========== VM: $vmName - Iniciado em $(Get-Date) ==========" | Add-Content $outputLog -Encoding UTF8
     # Ponteiro para o log corrente: o coletor le daqui em vez de adivinhar data/nome.
     $outputLog | Set-Content "$logsDir\bot-atual.txt"
 
@@ -336,8 +347,18 @@ function Sobe-Bot {
 
 function Sobe-Tail($outputLog) {
     # Janela so de acompanhamento por VNC - a fonte da verdade e o arquivo.
+    #
+    # ENCODING - sao DUAS pontas, e faltavam as duas:
+    #   -Encoding UTF8            -> o node grava UTF-8 SEM BOM (stdout redirecionado nao e TTY) e
+    #                                o Get-Content do PS 5.1 assume ANSI/CP1252 quando nao ha BOM.
+    #                                Sem a flag, acento e as bordas do console.table chegavam na
+    #                                janela como mojibake (cada byte UTF-8 lido como um caractere).
+    #   [Console]::OutputEncoding -> decodificar nao basta: o console imprime na codepage dele
+    #                                (850/1252) e troca por '?' tudo o que nao couber nela.
+    # Sem cifrao e sem backtick de proposito: esta string atravessa dois parsers ate virar o
+    # -Command do processo filho, e [Text.Encoding]::UTF8 nao tem nada a escapar.
     $t = Start-Process powershell.exe `
-        -ArgumentList "-NoExit","-NoProfile","-ExecutionPolicy","Bypass","-Command","Get-Content -Path '$outputLog' -Wait -Tail 50" `
+        -ArgumentList "-NoExit","-NoProfile","-ExecutionPolicy","Bypass","-Command","[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Content -Path '$outputLog' -Wait -Tail 50 -Encoding UTF8" `
         -PassThru `
         -WindowStyle Normal
     return $t.Id
@@ -410,7 +431,7 @@ while ($true) {
     if ($UmaVolta) { break }
 }
 '@
-Set-Content -Path "C:\Scripts\bot-supervisor.ps1" -Value $botSupervisorScript
+Set-Content -Path "C:\Scripts\bot-supervisor.ps1" -Value $botSupervisorScript -Encoding UTF8
 Write-Host "Script supervisor criado"
 
 # Script 2: startup-master.ps1
@@ -529,7 +550,7 @@ Write-Host "VNC: Porta 5900"
 
 Stop-Transcript
 "@
-Set-Content -Path "C:\Scripts\startup-master.ps1" -Value $startupMasterScript
+Set-Content -Path "C:\Scripts\startup-master.ps1" -Value $startupMasterScript -Encoding UTF8
 Write-Host "Script master criado"
 
 # ============================================

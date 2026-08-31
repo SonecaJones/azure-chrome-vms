@@ -27,6 +27,25 @@ Ok ($errs.Count -eq 0) "gerador parseia (erros: $($errs.Count))"
 $errs | Select-Object -First 3 | ForEach-Object { Write-Host "          $($_.Message)" }
 
 $txt = Get-Content $Arquivo -Raw
+
+# --- encoding do PROPRIO gerador ------------------------------------------------
+# O PS 5.1 le script SEM BOM como ANSI/CP1252. Sem o BOM aqui, todo o texto acentuado do gerador
+# chega corrompido ao motor E vai assim para dentro dos scripts gerados. Nao basta checar o byte:
+# o assert compara o literal montado por codepoint (este arquivo e ASCII de proposito) com o
+# mojibake que o ANSI produziria - se um "salvar como" tirar o BOM, o teste denuncia.
+$bytes = [IO.File]::ReadAllBytes($Arquivo)
+Ok ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) "gerador salvo com BOM UTF-8"
+
+$acentuado = "Metadata n" + [char]0xE3 + "o dispon" + [char]0xED + "vel"
+$mojibake  = [Text.Encoding]::GetEncoding(1252).GetString([Text.Encoding]::UTF8.GetBytes($acentuado))
+Ok ($txt.Contains($acentuado))     "texto acentuado do gerador chega intacto ao motor"
+Ok (-not $txt.Contains($mojibake)) "e nao chega como UTF-8 lido em CP1252"
+
+# O produto tambem roda em PS 5.1: gravar em ANSI dependeria da codepage da maquina.
+foreach ($g in @('ensure-gui-session.ps1', 'bot-supervisor.ps1', 'startup-master.ps1')) {
+    Ok ($txt -match ("Set-Content -Path .C:\\Scripts\\" + [regex]::Escape($g) + '.*-Encoding UTF8')) `
+       "$g e gravado em UTF8"
+}
 $m = [regex]::Match($txt, '\$startupMasterScript = @"\r?\n.*?\r?\n"@', 'Singleline')
 Ok $m.Success "here-string do startup-master encontrada"
 if (-not $m.Success) { exit 1 }
@@ -64,7 +83,13 @@ $esperado = @(
     @{ t = 'node $scriptPath >> ""$outputLog"" 2>&1'; d = 'node redireciona stdout+stderr para arquivo' },
     @{ t = '$outputLog = "$logsDir\bot-$vmName-$logDate.log"'; d = 'log nomeado pela VM, nao so pela data' },
     @{ t = "Get-Content -Path '`$outputLog' -Wait -Tail 50"; d = 'janela de tail para acompanhar por VNC' },
-    @{ t = '$outputLog | Set-Content "$logsDir\bot-atual.txt"'; d = 'ponteiro bot-atual.txt para o coletor' }
+    @{ t = '$outputLog | Set-Content "$logsDir\bot-atual.txt"'; d = 'ponteiro bot-atual.txt para o coletor' },
+    # ENCODING: o node grava UTF-8 sem BOM e o PS 5.1 le em ANSI por default. Sao DUAS pontas -
+    # decodificar (-Encoding UTF8) e imprimir ([Console]::OutputEncoding); faltando qualquer uma a
+    # janela volta ao mojibake. Sem estes asserts, uma delas pode sumir sem ninguem notar.
+    @{ t = '-Wait -Tail 50 -Encoding UTF8';                   d = 'a janela de tail LE o log em UTF-8' },
+    @{ t = '[Console]::OutputEncoding=[Text.Encoding]::UTF8'; d = 'a janela de tail IMPRIME em UTF-8' },
+    @{ t = '| Add-Content $outputLog -Encoding UTF8';         d = 'cabecalho poe BOM no log (leitor sem flag acerta sozinho)' }
 )
 foreach ($e in $esperado) { Ok ($produto.Contains($e.t)) $e.d }
 

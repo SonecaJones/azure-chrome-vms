@@ -36,11 +36,18 @@ Get-Content C:\logs\startup-master-*.log | Select-Object -Last 100
 # so de acompanhamento. O nome do log leva a VM (o antigo output-<data>.log era so por data,
 # e na pratica ficava vazio: o redirecionamento estava montado numa variavel que ninguem usava).
 
+# ENCODING - o node grava UTF-8 SEM BOM no log (stdout redirecionado nao e TTY) e o Get-Content
+# do PS 5.1 le em ANSI quando nao ha BOM. Sem as duas coisas abaixo (-Encoding UTF8 para DECODIFICAR
+# e [Console]::OutputEncoding para IMPRIMIR) a janela mostra acento e as bordas do console.table
+# corrompidos. O supervisor ja faz as duas a partir da imagem corrigida; nas VMs criadas ANTES do
+# re-bake, cole isto numa janela NOVA - nao derruba o node nem o Chrome.
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+
 # Ver o log corrente em tempo real (o ponteiro evita adivinhar data/nome):
-Get-Content (Get-Content C:\logs\node\bot-atual.txt) -Wait -Tail 50
+Get-Content (Get-Content C:\logs\node\bot-atual.txt) -Wait -Tail 50 -Encoding UTF8
 
 # Ou pelo nome completo:
-Get-Content C:\logs\node\bot-$env:COMPUTERNAME-$(Get-Date -Format 'yyyyMMdd').log -Wait -Tail 50
+Get-Content C:\logs\node\bot-$env:COMPUTERNAME-$(Get-Date -Format 'yyyyMMdd').log -Wait -Tail 50 -Encoding UTF8
 
 # --- BAIXAR OS LOGS DA FROTA INTEIRA (roda no notebook, nao na VM) ---
 # Depois da tentativa e ANTES de desligar/derrubar as VMs (run-command exige VM ligada):
