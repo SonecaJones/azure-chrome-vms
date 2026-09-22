@@ -55,10 +55,21 @@ $sup = "$Base\bot-supervisor.ps1"
 Ok (Test-Path $sup) "supervisor extraido do gerador"
 
 # "Bot" falso: fica vivo e escreve no stdout, para o log ter conteudo como o do bot real.
+# V4: se HB_ARQUIVO estiver no ambiente, grava o heartbeat no formato do helpers/heartbeat.js
+# ("<epochMs>|<prazoMs>") por HB_BATIDAS vezes e depois PARA de bater, seguindo vivo - e o
+# "node vivo porem travado" que o supervisor precisa matar. Sem a env, comporta-se como antes.
 $fake = "$Base\fake-bot.js"
 @'
 console.log("fake-bot vivo, pid " + process.pid);
-setInterval(function () { console.log("heartbeat " + new Date().toISOString()); }, 1000);
+var fs = require("fs");
+var hbArquivo = process.env.HB_ARQUIVO || "";
+var hbBatidas = Number(process.env.HB_BATIDAS || 0);
+var hbPrazo = Number(process.env.HB_PRAZO_MS || 3000);
+var n = 0;
+setInterval(function () {
+  console.log("heartbeat " + new Date().toISOString());
+  if (hbArquivo && n < hbBatidas) { n++; fs.writeFileSync(hbArquivo, Date.now() + "|" + hbPrazo + "\n"); }
+}, 1000);
 '@ | Set-Content $fake -Encoding ASCII
 
 $sentinela = "$Base\supervisor.off"
@@ -129,8 +140,41 @@ try {
     New-Item -ItemType File -Path $sentinela -Force | Out-Null
     Ok (Espera { -not (Vivo $supProc.Id) } 30 "saida do supervisor") "sentinela encerrou o laco de supervisao"
     Ok (Vivo $pidVivo) "o bot continua rodando depois da sentinela (kill-switch nao derruba o bot)"
+
+    # --- 6) V4: node VIVO porem TRAVADO (heartbeat silencioso) e reiniciado ------------------
+    # Ate aqui nenhum cenario tinha heartbeat (sem arquivo = sem vigilancia, como um bot antigo) -
+    # o que ja prova a compatibilidade. Agora o bot falso bate 3x (prazo 3s) e para, seguindo vivo.
+    Stop-Process -Id $pidVivo -Force -ErrorAction SilentlyContinue
+    Remove-Item $sentinela -Force -ErrorAction SilentlyContinue
+    Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*fake-bot.js*" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Ok (Espera { -not (Vivo $pidVivo) } 10 "bot parado antes do cenario 6") "bot anterior encerrado"
+    $hbArquivo = "$logsDir\heartbeat-VM-TESTE.txt"
+    $env:HB_ARQUIVO = $hbArquivo; $env:HB_BATIDAS = "3"; $env:HB_PRAZO_MS = "3000"
+    $args6 = $args + @("-TravadoMargemS", "2", "-PrazoPadraoS", "3")
+    $supProc = Start-Process powershell.exe -ArgumentList $args6 -PassThru -WindowStyle Minimized
+    Ok (Espera { Test-Path $hbArquivo } 30 "heartbeat gravado") "o bot falso gravou o heartbeat"
+    $pidTravado = 0
+    if (Test-Path "$logsDir\node.pid") { $pidTravado = [int](Get-Content "$logsDir\node.pid" | Select-Object -First 1) }
+    Ok (Vivo $pidTravado) "bot vivo e batendo (pid $pidTravado)"
+    # Silencio: 3 batidas (3s) + prazo 3s + margem 2s -> travado por volta de 8s; intervalo 2s.
+    Ok (Espera {
+            $c = Get-Content $logSup.FullName -Raw -ErrorAction SilentlyContinue
+            $c -match 'VIVO porem TRAVADO'
+        } 40 "veredito de travamento") "supervisor detectou node VIVO porem TRAVADO pelo heartbeat"
+    Ok (Espera { -not (Vivo $pidTravado) } 15 "morte do node travado") "o node travado foi morto"
+    Ok (Espera {
+            (Test-Path "$logsDir\node.pid") -and
+            ([int](Get-Content "$logsDir\node.pid" | Select-Object -First 1) -ne $pidTravado) -and
+            (Vivo ([int](Get-Content "$logsDir\node.pid" | Select-Object -First 1)))
+        } 40 "restart apos travamento") "o bot foi reiniciado depois do travamento"
+    $c6 = Get-Content $logSup.FullName -Raw -ErrorAction SilentlyContinue
+    Ok ($c6 -match 'fonte=heartbeat') "o veredito veio do heartbeat (nao do relogio de partida)"
+    Ok ($c6 -match 'heartbeat=.*heartbeat-\*\.txt') "o glob do heartbeat aparece no cabecalho da supervisao"
 }
 finally {
+    Remove-Item Env:HB_ARQUIVO, Env:HB_BATIDAS, Env:HB_PRAZO_MS -ErrorAction SilentlyContinue
     if (Vivo $supProc.Id) { Stop-Process -Id $supProc.Id -Force -ErrorAction SilentlyContinue }
     Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" -ErrorAction SilentlyContinue |

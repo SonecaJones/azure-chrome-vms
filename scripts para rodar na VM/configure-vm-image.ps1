@@ -263,6 +263,16 @@ $botSupervisorScript = @'
 #
 # KILL-SWITCH sem re-bake: criar C:\Scripts\supervisor.off (via az vmss run-command) faz o laco
 # sair SEM derrubar o bot.
+#
+# V4 (2026-09-21) - NODE VIVO POREM TRAVADO. O laco acima so observa morte de processo, e o modo de
+# travamento real do bot e um await que nunca resolve (CDP congelado): processo vivo, VM fora. O
+# bot passou a gravar um HEARTBEAT COOPERATIVO (helpers/heartbeat.js): uma linha "<epochMs>|<prazoMs>"
+# escrita pelo laco principal nos pontos de progresso, onde <prazoMs> e por quanto tempo ele pode
+# legitimamente ficar em silencio (antes de um cooldown longo ele declara um prazo maior). Se o
+# arquivo ficar mais velho que prazo + margem com o node vivo, o node e morto e o laco de restart
+# de sempre assume. SEM arquivo = SEM vigilancia (bot antigo): compativel com imagem anterior. Um
+# heartbeat mais velho que a partida DESTE node (arquivo de um boot anterior) nao conta; nesse caso
+# a referencia e a propria partida, com o prazo padrao.
 param(
   [string]$ScriptPath  = "C:\dpc\dpc-interno-rep\index.js",
   [string]$VmName      = $env:COMPUTERNAME,
@@ -274,6 +284,10 @@ param(
   [int]   $SaudavelS   = 300,   # node vivo por este tempo zera o contador de reinicios
   [string]$ProcNome    = "node.exe",  # hook de teste: exercitar o laco com outro processo
   [string]$Sentinela   = "C:\Scripts\supervisor.off",  # kill-switch: existe -> para de vigiar
+  [string]$Heartbeat   = "",    # V4: glob do arquivo de heartbeat; vazio = "$LogsDir\heartbeat-*.txt"
+  [int]   $TravadoMargemS = 60, # V4: folga sobre o prazo declarado pelo bot antes de considerar travado
+  [int]   $PrazoPadraoS = 600,  # V4: prazo quando o heartbeat e anterior a partida deste node (= HEARTBEAT_PRAZO_MS do bot)
+  [switch]$SemHeartbeat,              # V4: kill-switch da vigilancia de travamento (a de morte continua)
   [switch]$SemTail,                   # nao abre a janela de acompanhamento (headless/teste)
   [switch]$SemLaco,                   # rollback: sobe o bot e sai (comportamento antigo)
   [switch]$UmaVolta                   # hook de teste: uma iteracao e sai
@@ -303,6 +317,36 @@ function Get-BotPid($cmdPid) {
 function Vivo($processId) {
     if (-not $processId) { return $false }
     return [bool](Get-Process -Id $processId -ErrorAction SilentlyContinue)
+}
+
+# --- V4: heartbeat cooperativo --------------------------------------------------------------
+function Le-Heartbeat {
+    # Arquivo mais recente que casa o glob (o nome leva a VM; em teste pode haver mais de um).
+    $glob = if ($Heartbeat) { $Heartbeat } else { "$LogsDir\heartbeat-*.txt" }
+    $arq = Get-ChildItem $glob -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $arq) { return $null }
+    $linha = ""
+    try { $linha = (Get-Content $arq.FullName -TotalCount 1 -ErrorAction Stop) } catch { return $null }
+    $m = [regex]::Match([string]$linha, '^\s*(\d+)\|(\d+)\s*$')
+    if (-not $m.Success) { return $null }
+    return @{ EpochMs = [int64]$m.Groups[1].Value; PrazoMs = [int64]$m.Groups[2].Value; Arquivo = $arq.FullName }
+}
+
+function Diagnostico-Travado($estado) {
+    # Devolve $null (sem vigilancia ou saudavel) ou um hash com o motivo do veredito.
+    $hb = Le-Heartbeat
+    if (-not $hb) { return $null }   # sem arquivo = bot antigo ou HEARTBEAT_ARQUIVO vazio
+    $agoraMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $inicioMs = [DateTimeOffset]::new([datetime]$estado.Inicio).ToUnixTimeMilliseconds()
+    if ($hb.EpochMs -ge ($inicioMs - 5000)) {
+        $refMs = $hb.EpochMs; $prazoMs = $hb.PrazoMs; $fonte = "heartbeat"
+    } else {
+        # Arquivo de um node anterior (boot/restart): o relogio e a partida deste, com o prazo padrao.
+        $refMs = $inicioMs; $prazoMs = [int64]$PrazoPadraoS * 1000; $fonte = "partida"
+    }
+    $silencioMs = $agoraMs - $refMs
+    if ($silencioMs -le ($prazoMs + [int64]$TravadoMargemS * 1000)) { return $null }
+    return @{ SilencioS = [int]($silencioMs / 1000); PrazoS = [int]($prazoMs / 1000); Fonte = $fonte; Arquivo = $hb.Arquivo }
 }
 
 function Sobe-Bot {
@@ -386,7 +430,8 @@ if ($SemLaco) {
 
 $falhas = 0
 $tailFalhas = 0
-Log-Sup "supervisao ativa (intervalo ${IntervaloS}s, backoff ${EsperaBaseS}-${EsperaMaxS}s)"
+$hbInfo = if ($SemHeartbeat) { "heartbeat=desligado" } else { "heartbeat=$(if ($Heartbeat) { $Heartbeat } else { "$LogsDir\heartbeat-*.txt" }) margem=${TravadoMargemS}s" }
+Log-Sup "supervisao ativa (intervalo ${IntervaloS}s, backoff ${EsperaBaseS}-${EsperaMaxS}s, $hbInfo)"
 
 while ($true) {
     Start-Sleep -Seconds $IntervaloS
@@ -396,7 +441,19 @@ while ($true) {
             break
         }
 
-        if (Vivo $estado.BotPid) {
+        $vivo = Vivo $estado.BotPid
+        # V4: vivo porem travado = heartbeat silencioso alem do prazo que o proprio bot declarou.
+        if ($vivo -and -not $SemHeartbeat) {
+            $diag = Diagnostico-Travado $estado
+            if ($diag) {
+                Log-Sup "node VIVO porem TRAVADO: $($diag.SilencioS)s sem heartbeat (prazo $($diag.PrazoS)s + margem ${TravadoMargemS}s; fonte=$($diag.Fonte)). Matando o node para reiniciar."
+                Stop-Process -Id $estado.BotPid -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 2
+                $vivo = Vivo $estado.BotPid
+            }
+        }
+
+        if ($vivo) {
             if ($falhas -gt 0 -and ((Get-Date) - $estado.Inicio).TotalSeconds -ge $SaudavelS) {
                 # Reinicios sao falhas CONSECUTIVAS, nao a vida da VM - mesmo padrao de
                 # tentInplace/falhasCloudflare/recuperacoesConsecutivas no bot.
