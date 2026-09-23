@@ -11,8 +11,17 @@ Montagem da frota do zero. A assinatura estava **vazia** em 2026-09-22 (0 VMs, 0
 | Abertura | `HORA_ABERTURA=10:00` (idêntico nos dois bots VMSS) |
 | Frota | 30 VMs, VMSS única, `brazilsouth`, `Standard_F2s_v2` Spot |
 | Bases | `TOTAL_BASES=2`, `TOTAL_MACHINES=30` → instâncias 0-14 em `rep1`, 15-29 em `rep2` |
+| Slots | `TOTAL_SLOTS=33` = **maior `instanceId` + 1** (a VMSS sobe 0..32) |
 | Mongo | **produção** `cluster0.g8ou0.mongodb.net` |
 | Preferenciais | `PREF_DIAS_RESERVADOS=0` (inerte) |
+
+> **`TOTAL_MACHINES` e `TOTAL_SLOTS` são coisas diferentes — conferir os dois (R5, 2026-09-23).**
+> `TOTAL_MACHINES` divide a frota entre as bases e continua sendo a contagem de VMs **de
+> agendamento** (as que viram watcher não contam). `TOTAL_SLOTS` é o divisor do slot
+> (`instanceId % TOTAL_SLOTS`) na partição da agenda (L6) e no jitter pós-manutenção (M5), e tem
+> de ser **maior que o maior `instanceId` da VMSS**. No dia D 2026-09-23 os dois eram o mesmo
+> valor (30) com ids indo até 32: a VM_30 caiu no slot 0 e a VM_31 no slot 1 — duas VMs varrendo a
+> agenda a partir do mesmo ponto. Se subir/derrubar VMs, reavaliar os dois separadamente.
 
 Quota conferida: Spot usa *Total Regional Low-priority vCPUs* = **150**; 30 × 2 = 60. Folga de 2,5×.
 
@@ -228,9 +237,11 @@ powershell.exe -ExecutionPolicy Bypass -File .\testa-bot-supervisor.ps1
 
 Conferir no log de boot de algumas VMs:
 
-- `[CONFIG]` com `dev=false`, `HORA_ABERTURA=10:00`, `TOTAL_MACHINES=30`, `NIDOM=75`,
-  `PREF_DIAS_RESERVADOS=0`. Um `[CONFIG][ALERTA]` significa `DEV=true`, que desliga os três
-  aceleradores da abertura de uma vez.
+- `[CONFIG]` com `dev=false`, `HORA_ABERTURA=10:00`, `TOTAL_MACHINES=30`, `TOTAL_SLOTS=33`,
+  `NIDOM=75`, `PREF_DIAS_RESERVADOS=0`. Um `[CONFIG][ALERTA]` significa `DEV=true`, que desliga os
+  três aceleradores da abertura de uma vez.
+- `[MANUT_SAIDA] ... (slot k/33)` em VMs diferentes: **dois `k` iguais em VMs diferentes é o
+  sintoma do R5** (divisor de slot menor que o maior `instanceId`).
 - `DB_CONN_MODIFIED:` em **uma VM de cada metade** — abaixo de `VMRoboDPC_15` termina em `rep1`,
   dali para cima em `rep2`.
 - `[SESSAO] sobreviveu=...` aparecendo (L0/L1 medindo).
@@ -251,3 +262,19 @@ abertura é quem marca.
 VM desligada não aceita `run-command`. O coletor cria storage account + SAS write-only, empurra
 `coletar-logs-na-vm.ps1` em cada instância, baixa e gera `_resumo.csv` (a coluna `Reinicios` em 0
 significa que a VM atravessou o dia sem cair).
+
+### O que olhar primeiro (a partir de 2026-09-23)
+
+1. **A corrida com o concorrente** — `node scripts/analisa-telemetria.cjs`, seção **R3**. Ela
+   imprime a faixa em que as GRUs passaram de livres a `EM USO`, isto é, quando o concorrente
+   agendou. **Cruzar com os episódios de manutenção.** Se as tomadas caem dentro de uma janela em
+   que a frota recebia 522, ele enxerga o portal quando nós não enxergamos — e o problema deixa de
+   ser velocidade e passa a ser **caminho até o origin** (o 522 é gerado pelo POP do Cloudflare, e
+   a frota inteira está em `brazilsouth`). No log da VM a linha é `[CONCORRENTE]`.
+2. **`grep [CLAIM_SESSAO]`** — quantas vezes a VM claimou o dono da sessão viva (R1). A linha de
+   base do dia D 2026-09-23 é **7 sessões reusadas de 27 sobreviventes**; se esse número não subir,
+   o R1 não entregou.
+3. **`grep [PORTAO] rep_limite`** — quantos POSTs bateram na recusa definitiva do titular (R2).
+   Cada um desses, antes, custava até 4 POSTs e 5 captchas.
+4. Registros que terminam em `SEM GRUS VALIDAS!` **continuam banidos do pool** — é o desfecho certo,
+   e a base é recriada na importação do próximo dia D.
