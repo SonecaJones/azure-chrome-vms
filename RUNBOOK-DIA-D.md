@@ -246,9 +246,25 @@ Conferir no log de boot de algumas VMs:
   dali para cima em `rep2`.
 - `[SESSAO] sobreviveu=...` aparecendo (L0/L1 medindo).
 
-Nas 1-2 VMs de watcher: parar o `dpc-interno-rep` e subir o watcher à mão via VNC
-(`cd C:\dpc\dpc-agenda-watcher && node index.js`). Confirmar `Servidor socket.io ouvindo na porta
-3000` e o registro em `ws_servers`.
+Nas 1-2 VMs de watcher: parar o `dpc-interno-rep` e subir o watcher à mão via VNC — **com
+`npm run prod`, nunca `node index.js`**:
+
+```powershell
+cd C:\dpc\dpc-agenda-watcher
+npm run prod
+```
+
+`npm run prod` (`scripts/roda-com-log.ps1`) redireciona stdout+stderr para
+`C:\logs\node\bot-watcher-<vm>-<data>.log`, que é **onde o coletor procura** (ele varre
+`bot-*.log`), abre uma janela de acompanhamento e roda o bot em foreground — o Ctrl+C continua
+encerrando como sempre. `node index.js` escreve só no scrollback do `cmd` e o traço do dia se
+perde (medido em 2026-09-30; ver a seção 9). O `npm start` segue existindo, sem redirecionamento:
+é o que o supervisor usa.
+
+O mesmo vale para o `dpc-interno-rep` subido à mão (`npm run prod`, que grava
+`bot-rep-<vm>-<data>.log`). `npm run prod -- -SemTail` dispensa a janela de acompanhamento.
+
+Confirmar `Servidor socket.io ouvindo na porta 3000` e o registro em `ws_servers`.
 
 Subir a frota **com folga**: o portal só aceita POST com ~30 s de PHPSESSID, e quem chega maduro na
 abertura é quem marca.
@@ -256,12 +272,38 @@ abertura é quem marca.
 ## 9. Depois da tentativa (antes de derrubar a frota)
 
 ```powershell
-.\coletar-logs-vmss.ps1
+.\coletar-logs-vmss.ps1          # a frota (VMSS)
+.\coletar-logs-originaria.ps1    # a VM originaria (VMrobodpc, a que virou watcher)
+.\coletar-logs-containers.ps1    # os containers do dpc-login-gov (ACI)
 ```
 
 VM desligada não aceita `run-command`. O coletor cria storage account + SAS write-only, empurra
 `coletar-logs-na-vm.ps1` em cada instância, baixa e gera `_resumo.csv` (a coluna `Reinicios` em 0
-significa que a VM atravessou o dia sem cair).
+significa que a VM atravessou o dia sem cair). Os três são **somente leitura** e aceitam `-DryRun`.
+
+- **A originária precisa de script próprio**: o coletor da frota só fala com VMSS
+  (`az vmss run-command --instance-id`); a VM avulsa exige `az vm run-command`. O script empurrado
+  para dentro dela é o MESMO `coletar-logs-na-vm.ps1`.
+- **Bot subido à mão com `node index.js` não deixa log em arquivo** (medido 2026-09-30): o
+  redirecionamento `>> arquivo 2>&1` é do `startup-master.ps1`/`bot-supervisor.ps1`, então o
+  comando digitado na sessão gráfica escreve só no scrollback do `cmd`. A coleta volta
+  `arquivos=9 upload=OK` e **sem nenhum log da data da tentativa** — o
+  `coletar-logs-originaria.ps1` avisa isso no fim. **É o que o `npm run prod` da seção 8
+  resolve**; se alguém subiu com `node index.js`, conferir ANTES de derrubar a frota (existe
+  `C:\logs\node\*-<hoje>.log`?): depois não há recuperação, e do watcher sobra só
+  `watcher.watchers.log[]` no Mongo.
+- **Container não escreve log em arquivo, só stdout**, e ele se perde ao apagar o container group.
+  Coletar pela API REST: `az container logs` trunca em ~2000 linhas em silêncio, e o `az rest`
+  devolve o conteúdo certo mas **sai com exit 1** em log grande (daí o `Invoke-RestMethod`).
+  Integridade se confere pela PRIMEIRA linha (deve ser a do `DB_CONN`), nunca pela contagem.
+
+E o dump do Mongo, também somente leitura (a base é derrubada entre temporadas):
+
+```powershell
+cd "..\DPC REPRESENTANTE\dpc-interno-rep"
+node scripts/dump-colecoes.cjs --inventario   # confere bases/contagens
+node scripts/dump-colecoes.cjs --tudo         # -> logs\dump-<yyyyMMdd>\
+```
 
 ### O que olhar primeiro (a partir de 2026-09-23)
 
