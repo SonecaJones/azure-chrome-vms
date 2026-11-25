@@ -3,6 +3,18 @@
 # Baixa os logs do `dpc-interno-rep` de TODAS as instancias de TODAS as VMSS (todas as regioes)
 # para uma pasta local, apos uma tentativa real.
 #
+# ESTA COLETA E OBRIGATORIA EM TODO DIA D - NAO E OPCIONAL
+#   "Baixar os logs do dia" inclui ESTA coleta, mesmo que ninguem cite as VMs. Os logs das VMs sao
+#   a UNICA fonte para verificar as melhorias feitas no periodo anterior ao dia D. Quase tudo que
+#   um slice novo instrumenta sai so no log da VM:
+#     [WAF403] [WAF_RESGATE] [CF_PASSAGEM] (W1)   [HTTP5XX] cf-ray (K1)   [POLLING_52X] (K2)
+#     [CLEAN] tempo do solver (Y1b)   [PORTAO_CAPTCHA] [PORTAO_W3] (captcha)   [SESSAO_VIDA]
+#     [MANUT_ONLINE] (quem liberou o semaforo)   [CONCORRENTE]   [DATA_TROCADA]   [CONFIG]
+#   O dump do Mongo NAO substitui: ele guarda quase so os ciclos que deram certo (ver a memoria
+#   "taxa de captcha nao sai do Mongo"), e o log dos containers e so do dpc-login-gov.
+#   Sem esta coleta o dia D vira "deu X agendamentos" e nenhuma melhoria fica provada ou refutada.
+#   Em 2026-11-25 ela se perdeu (RG apagado com a coleta em curso) e nao ha como refazer.
+#
 # COMO FUNCIONA
 #   1. Cria (ou reusa) um storage account descartavel no proprio RG e um container.
 #   2. Gera um SAS de container SO DE ESCRITA (create/add/write - sem read, sem list), valido por
@@ -10,7 +22,10 @@
 #   3. Empurra `scripts para rodar na VM\coletar-logs-na-vm.ps1` para cada instancia via
 #      `az vmss run-command invoke`. Cada VM zipa C:\logs e faz PUT do zip no container.
 #   4. Baixa tudo com a chave da conta e descompacta por VM.
-#   5. Imprime um resumo e grava _resumo.csv. Apaga o container ao fim (salvo -ManterContainer).
+#   5. Imprime um resumo e grava _resumo.csv. Apaga o container ao fim (salvo -ManterContainer)
+#      SO SE todos os zips chegaram ao disco, e termina com o veredito LIBERADO / NAO DERRUBE.
+#      Em 2026-11-25 o download falhou em silencio, o container foi apagado e o RG derrubado em
+#      seguida: os logs da frota do dia se perderam (ver coleta-blob-comum.ps1).
 #
 # POR QUE BLOB, E NAO O STDOUT DO RUN-COMMAND
 #   O `run-command` trunca a saida em ~4 KB; um log de tentativa real passa de 400 KB por VM.
@@ -69,10 +84,23 @@ function Az-Json([string[]]$a) {
     try { return ($out | ConvertFrom-Json) } catch { return $null }
 }
 
+# Download com retentativa, limpeza condicional do container e veredito final (2026-11-25).
+. (Join-Path $PSScriptRoot "coleta-blob-comum.ps1")
+
 # ------------------------------------------------------------------------------------------------
 # 1) Pre-checks
 # ------------------------------------------------------------------------------------------------
 Titulo "COLETA DE LOGS DA FROTA - dpc-interno-rep"
+Write-Host "OBRIGATORIA: os logs das VMs sao a unica fonte para verificar as melhorias" -ForegroundColor Yellow
+Write-Host "do periodo (W1, K1, K2, Y1b, captcha...). O dump do Mongo NAO substitui." -ForegroundColor Yellow
+Write-Host "Nao derrube a frota nem o RG antes da linha LIBERADO no fim deste script." -ForegroundColor Yellow
+
+# O que se perde se esta coleta nao terminar: vai junto do veredito NAO DERRUBE.
+$perda = @(
+    "Sem os logs das VMs nao ha como verificar as melhorias do periodo anterior ao dia D",
+    "([WAF403]/[WAF_RESGATE], [HTTP5XX] cf-ray, [POLLING_52X], [CLEAN], [PORTAO_CAPTCHA]...).",
+    "O dump do Mongo NAO substitui. Depois que a VM for apagada, nao ha recuperacao."
+)
 
 if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
     Write-Host "ERRO: Azure CLI (az) nao encontrado no PATH." -ForegroundColor Red
@@ -111,9 +139,12 @@ Write-Host "Destino      : $Destino"
 Titulo "INSTANCIAS"
 
 $alvos = @()
+$desligadas = @()      # VM existe mas nao esta ligada: o disco (e o log) continuam la
+$ausentes = @()        # VMSS que nao existe mais: se houve dia D, o log ja se perdeu
 foreach ($nome in $Vmss) {
     if (-not (Az-Json @('vmss','show','-g',$ResourceGroup,'-n',$nome,'-o','json'))) {
         Write-Host "  [--] $nome : nao existe neste RG - pulando" -ForegroundColor DarkYellow
+        $ausentes += $nome
         continue
     }
 
@@ -136,6 +167,7 @@ foreach ($nome in $Vmss) {
         } catch { }
         if ($power -and $power -ne 'PowerState/running') {
             Write-Host "  [--] $nome/$id : $power - pulando (run-command exige VM ligada)" -ForegroundColor DarkYellow
+            $desligadas += [pscustomobject]@{ Vmss = $nome; Id = $id; Power = $power }
             continue
         }
 
@@ -145,9 +177,31 @@ foreach ($nome in $Vmss) {
     Write-Host "  [ok] $nome : $n instancia(s)"
 }
 
+# VM desligada (deallocated) NAO perdeu o log: o disco do SO e persistente (a VMSS nao usa disco
+# efemero). Religar, coletar e desligar de novo. Ao religar o bot sobe sozinho no boot - coletar
+# logo e desligar. VMSS ausente e perda definitiva (ou infra zerada entre temporadas).
+$motivosPulo = @()
+if ($desligadas.Count -gt 0) {
+    $porVmss = $desligadas | Group-Object Vmss
+    foreach ($g in $porVmss) {
+        $ids = ($g.Group | ForEach-Object { $_.Id }) -join ' '
+        $motivosPulo += "$($g.Count) VM(s) desligadas em $($g.Name) NAO foram coletadas (o log continua no disco). Religar e rodar de novo:"
+        $motivosPulo += "    az vmss start -g $ResourceGroup -n $($g.Name) --instance-ids $ids"
+        $motivosPulo += "    .\coletar-logs-vmss.ps1 -Vmss $($g.Name) -InstanceIds $(($g.Group | ForEach-Object { $_.Id }) -join ',')"
+    }
+}
+foreach ($a in $ausentes) {
+    $motivosPulo += "VMSS '$a' nao existe: se houve dia D com ela, os logs dela ja se perderam (ou a infra esta zerada entre temporadas)"
+}
+
 if ($alvos.Count -eq 0) {
     Write-Host ""
-    Write-Host "Nenhuma instancia elegivel. Nada a coletar." -ForegroundColor Yellow
+    Write-Host "Nenhuma instancia ligada para coletar." -ForegroundColor Yellow
+    if ($motivosPulo.Count -gt 0) {
+        Escreve-Veredito $motivosPulo "a frota / o RG" $perda
+        exit 2
+    }
+    Write-Host "Nada a coletar." -ForegroundColor Yellow
     exit 0
 }
 Write-Host ""
@@ -283,26 +337,19 @@ foreach ($j in $jobs) {
 # ------------------------------------------------------------------------------------------------
 Titulo "DOWNLOAD"
 
-New-Item -ItemType Directory -Force -Path $Destino | Out-Null
-& az storage blob download-batch -d $Destino -s $Container `
-    --account-name $StorageAccount --account-key $chave --pattern "*" -o none 2>$null
-
-$zips = @(Get-ChildItem -Path $Destino -Filter "*.zip" -Recurse -ErrorAction SilentlyContinue)
-Write-Host "Zips baixados: $($zips.Count)"
-foreach ($z in $zips) {
-    $pasta = Join-Path $z.DirectoryName $z.BaseName
-    New-Item -ItemType Directory -Force -Path $pasta | Out-Null
-    try { Expand-Archive -Path $z.FullName -DestinationPath $pasta -Force }
-    catch { Write-Host "  [!!] falha ao descompactar $($z.Name): $_" -ForegroundColor Red }
-}
+$uploadsOk = @($resultados | Where-Object { $_.Upload -eq 'OK' }).Count
+$download = Baixa-Coleta -Destino $Destino -Conta $StorageAccount -Chave $chave -Container $Container -EsperadosMin $uploadsOk
 
 # Conta as linhas do log do bot de cada VM (0 = VM sem log: imagem antiga, ou bot que nao subiu) e
 # quantas vezes o supervisor teve de reiniciar o bot (0 = a VM atravessou o dia sem cair).
+# `Baixado` separa "VM sem log" de "o zip dela nao desceu" - em 2026-11-25 os dois saiam como 0.
 foreach ($r in $resultados) {
     $linhas = 0
     $reinicios = 0
+    $baixado = $false
     if ($r.VmName) {
         $pasta = Join-Path $Destino (Join-Path $r.Vmss ($r.VmName -replace '[^A-Za-z0-9_.-]', '_'))
+        $baixado = Test-Path -LiteralPath $pasta
         Get-ChildItem -Path $pasta -Filter "bot-*.log" -ErrorAction SilentlyContinue | ForEach-Object {
             $linhas += @(Get-Content $_.FullName -ErrorAction SilentlyContinue).Count
         }
@@ -312,6 +359,7 @@ foreach ($r in $resultados) {
     }
     $r | Add-Member -NotePropertyName LinhasLogBot -NotePropertyValue $linhas -Force
     $r | Add-Member -NotePropertyName Reinicios -NotePropertyValue $reinicios -Force
+    $r | Add-Member -NotePropertyName Baixado -NotePropertyValue $(if ($baixado) { 'sim' } else { 'NAO' }) -Force
 }
 
 # ------------------------------------------------------------------------------------------------
@@ -319,20 +367,27 @@ foreach ($r in $resultados) {
 # ------------------------------------------------------------------------------------------------
 Titulo "RESUMO"
 
-$resultados | Select-Object Vmss, Id, VmName, Arquivos, Bytes, LinhasLogBot, Reinicios, Upload |
+$resultados | Select-Object Vmss, Id, VmName, Arquivos, Bytes, Baixado, LinhasLogBot, Reinicios, Upload |
     Sort-Object Vmss, Id | Format-Table -AutoSize
 
 $csv = Join-Path $Destino "_resumo.csv"
-$resultados | Select-Object Vmss, Id, VmName, Arquivos, Bytes, LinhasLogBot, Reinicios, Upload |
+$resultados | Select-Object Vmss, Id, VmName, Arquivos, Bytes, Baixado, LinhasLogBot, Reinicios, Upload |
     Sort-Object Vmss, Id | Export-Csv -Path $csv -NoTypeInformation -Encoding UTF8
 
 $ok      = @($resultados | Where-Object { $_.Upload -eq 'OK' })
-$semLog  = @($ok | Where-Object { $_.LinhasLogBot -eq 0 })
+$naoDesceu = @($ok | Where-Object { $_.Baixado -ne 'sim' })
+$semLog  = @($ok | Where-Object { $_.Baixado -eq 'sim' -and $_.LinhasLogBot -eq 0 })
 $falhou  = @($resultados | Where-Object { $_.Upload -ne 'OK' })
 $reiniciadas = @($ok | Where-Object { $_.Reinicios -gt 0 })
 
 Write-Host "Coletadas com sucesso : $($ok.Count) de $($resultados.Count)"
+Write-Host "No disco              : $($ok.Count - $naoDesceu.Count) de $($ok.Count)"
 Write-Host "Falharam              : $($falhou.Count)"
+if ($naoDesceu.Count -gt 0) {
+    Write-Host ""
+    Write-Host "ATENCAO: $($naoDesceu.Count) VM(s) fizeram upload OK mas o zip NAO chegou ao disco:" -ForegroundColor Red
+    Write-Host "  $(($naoDesceu | ForEach-Object { $_.VmName }) -join ', ')" -ForegroundColor Red
+}
 if ($semLog.Count -gt 0) {
     Write-Host ""
     Write-Host "ATENCAO: $($semLog.Count) VM(s) responderam mas vieram SEM log do bot:" -ForegroundColor Yellow
@@ -349,11 +404,14 @@ Write-Host "Resumo em   : $csv"
 # ------------------------------------------------------------------------------------------------
 if (Test-Path $scriptTemp) { Remove-Item -LiteralPath $scriptTemp -Force -ErrorAction SilentlyContinue }
 
-if ($ManterContainer) {
-    Write-Host ""
-    Write-Host "-ManterContainer: container '$Container' preservado no storage $StorageAccount."
-} else {
-    & az storage container delete --account-name $StorageAccount --account-key $chave -n $Container -o none 2>$null
-    Write-Host ""
-    Write-Host "Container '$Container' apagado (o storage account foi mantido para a proxima coleta)."
-}
+Fecha-ContainerColeta -Conta $StorageAccount -Chave $chave -Container $Container -ResourceGroup $ResourceGroup `
+    -Destino $Destino -Completo ($download.Completo -and $naoDesceu.Count -eq 0) -Manter ([bool]$ManterContainer)
+
+$motivos = @()
+if (-not $download.Completo) { $motivos += "download incompleto: $($download.Baixados) de $($download.Esperados) zips no disco" }
+if ($naoDesceu.Count -gt 0)  { $motivos += "$($naoDesceu.Count) VM(s) com upload OK sem zip no disco" }
+if ($falhou.Count -gt 0)     { $motivos += "$($falhou.Count) VM(s) ligadas nao entregaram o log (rode de novo so nelas com -InstanceIds)" }
+# Antes de 2026-11-25 VM desligada era so pulada, e o veredito podia sair LIBERADO sem o log dela.
+$motivos += $motivosPulo
+Escreve-Veredito $motivos "a frota / o RG" $perda
+if ($motivos.Count -gt 0) { exit 2 }

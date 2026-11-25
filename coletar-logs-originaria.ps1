@@ -56,6 +56,9 @@ function Titulo($t) {
     Write-Host "=========================================="
 }
 
+# Download com retentativa, limpeza condicional do container e veredito final (2026-11-25).
+. (Join-Path $PSScriptRoot "coleta-blob-comum.ps1")
+
 Titulo "COLETA DE LOGS - VM AVULSA ($Vm)"
 
 if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
@@ -178,18 +181,8 @@ Write-Host $recibo
 # ------------------------------------------------------------------------------------------------
 Titulo "DOWNLOAD"
 
-New-Item -ItemType Directory -Force -Path $Destino | Out-Null
-& az storage blob download-batch -d $Destino -s $Container `
-    --account-name $StorageAccount --account-key $chave --pattern "*" -o none 2>$null
-
-$zips = @(Get-ChildItem -Path $Destino -Filter "*.zip" -Recurse -ErrorAction SilentlyContinue)
-Write-Host "Zips baixados: $($zips.Count)"
-foreach ($z in $zips) {
-    $pasta = Join-Path $z.DirectoryName $z.BaseName
-    New-Item -ItemType Directory -Force -Path $pasta | Out-Null
-    try { Expand-Archive -Path $z.FullName -DestinationPath $pasta -Force }
-    catch { Write-Host "  [!!] falha ao descompactar $($z.Name): $_" -ForegroundColor Red }
-}
+$uploadOk = [bool]($recibo -match 'upload=OK')
+$download = Baixa-Coleta -Destino $Destino -Conta $StorageAccount -Chave $chave -Container $Container -EsperadosMin $(if ($uploadOk) { 1 } else { 0 })
 
 Get-ChildItem -Path $Destino -Recurse -File | ForEach-Object {
     Write-Host ("  {0,-60} {1,10} bytes" -f $_.FullName.Substring($Destino.Length + 1), $_.Length)
@@ -210,13 +203,15 @@ if ($doDia.Count -eq 0) {
 # ------------------------------------------------------------------------------------------------
 if (Test-Path $scriptTemp) { Remove-Item -LiteralPath $scriptTemp -Force -ErrorAction SilentlyContinue }
 
-if ($ManterContainer) {
-    Write-Host ""
-    Write-Host "-ManterContainer: container '$Container' preservado no storage $StorageAccount."
-} else {
-    & az storage container delete --account-name $StorageAccount --account-key $chave -n $Container -o none 2>$null
-    Write-Host ""
-    Write-Host "Container '$Container' apagado (o storage account foi mantido para a proxima coleta)."
-}
+Fecha-ContainerColeta -Conta $StorageAccount -Chave $chave -Container $Container -ResourceGroup $ResourceGroup `
+    -Destino $Destino -Completo ($download.Completo -and $download.Baixados -gt 0) -Manter ([bool]$ManterContainer)
 Write-Host ""
 Write-Host "Arquivos em : $Destino"
+
+$motivos = @()
+if (-not $uploadOk)              { $motivos += "a VM nao confirmou o upload (recibo sem upload=OK)" }
+if (-not $download.Completo -or $download.Baixados -eq 0) {
+    $motivos += "download incompleto: $($download.Baixados) de $($download.Esperados) zips no disco"
+}
+if ($doDia.Count -eq 0)          { $motivos += "nenhum bot-*-$hoje.log: confira por VNC se o log do dia existe antes de desligar" }
+Escreve-Veredito $motivos "a VM $Vm"

@@ -70,6 +70,51 @@ Conferir `C:\logs\setup-complete-vm.log`, **reiniciar** e validar que o bot sobe
   vigia travamento**
 - `C:\logs\node\supervisor-<vm>-<data>.log` sem reinícios em loop
 
+## 2b. Véspera: validar o W1 no Azure (VM originária, ~30 min)
+
+**Por quê.** Em 2026-10-30 ficou provado no Chrome **local** que a "queda de sessão aos ~885 s" é a liberação do
+Cloudflare vencendo (403 com `cf-mitigated: challenge` ~900 s depois do desafio resolvido), não a sessão do PHP.
+O W1 passou a resgatar a sessão e a renovar a liberação antes da abertura. Mas lá o desafio **se resolve sozinho,
+sem clique**. Na VM do Azure o solver **clica** (B3-fast), e é isso que este teste mede: o mecanismo vale lá também,
+e quanto custa?
+
+**Pré-requisitos**
+- A VM originária montada (seção 2), com o código do W1 em `C:\dpc\dpc-interno-rep` e `npm install` rodado.
+- **O bot PARADO na VM** enquanto o teste roda: ele tocaria a sessão e sujaria a medição. Crie `C:\Scripts\supervisor.off` e faça Ctrl+C no bot. O Chrome da 9222 continua aberto.
+- **Um Mongo de teste que a VM alcance.** O de 2026-10-30 era `127.0.0.1` na máquina local, e a VM não chega
+  nele. Use uma base de teste no Atlas e grave `DB_CONN_TESTE=<uri>` no `.env` da VM. Se a URI não tiver "teste"
+  no nome, o probe exige `--db-qualquer`.
+- **Representante de teste logado na hora:** rode o `dpc-login` na máquina **local** (o hCaptcha só passa lá),
+  gravando o `cookiesGov` nessa mesma base. Ele vale ~45 min, então rode o teste logo em seguida.
+
+**O teste: uma rodada só cobre as duas coisas (~28 min)**
+
+```powershell
+cd C:\dpc\dpc-interno-rep
+node scripts/probe-vida-sessao.mjs --rep=<cpf-de-teste> --base=rep1 [--db-qualquer] `
+     --tocar=on --intervalo=20000 --max=1680000 --renova-clearance-aos=600 > C:\logs\w1-azure.txt 2>&1
+```
+
+**O que esperar, em ordem**
+
+| Momento | Linha no log | Passa se... |
+|---|---|---|
+| abertura | `[DESAFIO] ultima passagem conhecida: ... (desafio resolvido na abertura)` | o solver resolveu (com clique). Anote quanto tempo levou. |
+| 600 s | `[RENOVA] ... renovado=true` | **renovou** (`renovado=false restaurado=true` = falhou). Anote se houve `[CLEAN]` com clique e a duração. |
+| ~1500 s (600 + ~900) | `[DESAFIO] ... 403 cf-mitigated=challenge` | o desafio vem ~900 s **depois da renovação**. Se vier ~900 s depois da abertura, a renovação não pegou. |
+| logo depois | `[DESAFIO] leitura apos o resgate: viva=true` | a **mesma sessão** continua logada depois do resgate, sem login novo. |
+
+Se as quatro linhas passarem, o W1 vale no Azure. Se só o resgate falhar ou ficar lento demais (o clique não
+resolve, ou leva mais de ~20 s), considere `WAF_RESGATA_SESSAO`. Se a renovação falhar, `CF_RENOVA_PASSAGEM=false`
+desliga a renovação proativa sem deploy, e o resgate reativo continua.
+
+**No fim**
+- Logout da Marinha (o mesmo do botão "Sair": navegar para `.../sisap/agendamento/server/logout.php`).
+- Apague `C:\Scripts\supervisor.off`, para a imagem não sair com a vigilância desligada.
+- **Copie o `C:\logs\w1-azure.txt` para o notebook antes do bake**. A imagem não precisa dele, e ele é o registro
+  do resultado.
+- Referência do resultado local: `dpc-interno-rep/CLAUDE.md`, seção W1 (desafios a 914-916 s, renovação 18:02:22 → desafio 18:17:37, sessão viva a 1684 s).
+
 ## 3. Capturar a imagem
 
 ```powershell
@@ -269,13 +314,51 @@ Confirmar `Servidor socket.io ouvindo na porta 3000` e o registro em `ws_servers
 Subir a frota **com folga**: o portal só aceita POST com ~30 s de PHPSESSID, e quem chega maduro na
 abertura é quem marca.
 
+### Tirar uma VM da disputa no meio do dia D
+
+Quando uma VM fica doente no meio da disputa — no dia D 2026-10-30 a VM2 ficou ~2,5 min presa
+recebendo 522 na carga de GRU (`validargruinformada`), **segurando um registro**, enquanto outra VM
+recebia 200 —, desligar o bot dela à mão é a decisão certa: ela deixa de pegar registros que uma VM
+saudável pegaria. O SIGHUP/Ctrl+C libera o registro corretamente (o handler de shutdown faz o
+`salvaAgendamento`). Procedimento, nesta ordem:
+
+1. Criar a sentinela do supervisor, **antes** de matar o bot, para ele não religá-lo:
+   `New-Item -ItemType File C:\Scripts\supervisor.off -Force` (ou `az vmss run-command`).
+2. `Ctrl+C` na janela do bot (ou fechar a janela) — o registro é liberado no shutdown.
+3. Para religar depois: apagar `C:\Scripts\supervisor.off` e subir com `npm run prod` (grava
+   `bot-rep-<vm>-<data>.log`). `node index.js` à mão **não** grava log em arquivo — ver a seção 9.
+
+Com o slice que solta o registro no 1º 522 da carga de GRU (em implementação), esse caso deve se
+resolver sozinho em ~20 s. Desligar à mão continua valendo se a VM seguir doente.
+
 ## 9. Depois da tentativa (antes de derrubar a frota)
 
+> **A coleta dos logs das VMs (`coletar-logs-vmss.ps1`) é OBRIGATÓRIA em todo dia D.** "Baixar os
+> logs do dia" inclui sempre a frota, mesmo que ninguém cite as VMs. É a **única** fonte para
+> verificar as melhorias feitas no período anterior ao dia D: `[WAF403]`/`[WAF_RESGATE]` (W1),
+> `[HTTP5XX]` com `cf-ray` (K1), `[POLLING_52X]` (K2), tempo do solver `[CLEAN]` (Y1b),
+> `[PORTAO_CAPTCHA]`, `[SESSAO_VIDA]`, `[MANUT_ONLINE]`, `[CONCORRENTE]` só existem lá. O dump do
+> Mongo **não substitui** (guarda quase só os ciclos que deram certo) e o log dos containers é só do
+> `dpc-login-gov`. Sem ela o dia D vira "deu X agendamentos" e nenhum slice fica provado.
+> Em 2026-11-25 ela se perdeu e não há como refazer.
+
 ```powershell
-.\coletar-logs-vmss.ps1          # a frota (VMSS)
+.\coletar-logs-vmss.ps1          # a frota (VMSS) - OBRIGATORIA, rodar primeiro
 .\coletar-logs-originaria.ps1    # a VM originaria (VMrobodpc, a que virou watcher)
 .\coletar-logs-containers.ps1    # os containers do dpc-login-gov (ACI)
 ```
+
+**Só derrubar a frota / o RG depois de os TRÊS coletores terminarem com `LIBERADO`** na última
+linha. `NAO DERRUBE ... AINDA` lista o que falta. Em 2026-11-25 o RG foi apagado com a coleta da
+frota em curso: 16 VMs tinham feito upload, o download falhou em silêncio, o container foi apagado
+e os logs das 36 VMs do dia se perderam. Desde então o coletor mostra o erro do download, retenta,
+compara com o que há no blob e **não apaga o container** se faltar zip (imprime o comando para
+rebaixar). Teste offline: `powershell.exe -File testa-coleta-blob.ps1`.
+
+VM **desligada (deallocated) não perdeu o log** — o disco do SO é persistente. O coletor da frota
+agora não a ignora mais em silêncio: lista as desligadas no `NAO DERRUBE` com o `az vmss start` e o
+comando para coletar só elas (ao religar o bot sobe sozinho no boot: coletar e desligar logo). Sai
+com exit 2 sempre que não liberar. VMSS apagada é perda definitiva.
 
 VM desligada não aceita `run-command`. O coletor cria storage account + SAS write-only, empurra
 `coletar-logs-na-vm.ps1` em cada instância, baixa e gera `_resumo.csv` (a coluna `Reinicios` em 0
@@ -303,7 +386,18 @@ E o dump do Mongo, também somente leitura (a base é derrubada entre temporadas
 cd "..\DPC REPRESENTANTE\dpc-interno-rep"
 node scripts/dump-colecoes.cjs --inventario   # confere bases/contagens
 node scripts/dump-colecoes.cjs --tudo         # -> logs\dump-<yyyyMMdd>\
+node scripts/analisa-telemetria.cjs --dias=1 --json=logs\telemetria-dump-<yyyyMMdd>.json > logs\telemetria-analise-<yyyyMMdd>.txt
 ```
+
+O arquivo de sucessos para o cliente sai do dump (sem Mongo), já conferindo os comprovantes:
+
+```powershell
+node scripts/gera-agendamentos-sucesso.cjs --pdfs="C:\Dev\free\DPC\AUXILIAR\AUXILIAR\resultados\<pasta do mes>"
+# -> logs\dump-<hoje>\agendamentos-sucesso.txt ; lista os sucessos SEM pdf (cidagendamento salvo p/ reimprimir)
+```
+
+A conferência casa pelo nome inteiro (`<cpf rep>_<numero>.pdf`), não só pelo CPF: o mesmo
+representante aparece em rep1 e rep2 e pode ter dois agendamentos.
 
 ### O que olhar primeiro (a partir de 2026-09-23)
 

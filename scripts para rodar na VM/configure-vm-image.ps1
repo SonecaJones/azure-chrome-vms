@@ -327,6 +327,11 @@ function Le-Heartbeat {
     if (-not $arq) { return $null }
     $linha = ""
     try { $linha = (Get-Content $arq.FullName -TotalCount 1 -ErrorAction Stop) } catch { return $null }
+    # O bot regrava o arquivo e o supervisor pode le-lo VAZIO no meio da escrita: Get-Content
+    # devolve $null e, no PS 5.1, [regex]::Match([string]$null, ...) LANCA ("Value cannot be null.
+    # Parameter name: input"), caindo no catch do laco como 'erro no laco (ignorado)' (5x no dia D
+    # 2026-10-30). Heartbeat ilegivel = sem leitura, o mesmo desfecho do -not $m.Success abaixo.
+    if ([string]::IsNullOrWhiteSpace([string]$linha)) { return $null }
     $m = [regex]::Match([string]$linha, '^\s*(\d+)\|(\d+)\s*$')
     if (-not $m.Success) { return $null }
     return @{ EpochMs = [int64]$m.Groups[1].Value; PrazoMs = [int64]$m.Groups[2].Value; Arquivo = $arq.FullName }

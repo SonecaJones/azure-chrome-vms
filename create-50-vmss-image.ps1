@@ -1,32 +1,3 @@
-# Criar regras NSG para VM teste
-
-# Adicionar regra NSG para porta 5900 (VNC)
-az network nsg rule create `
-  --resource-group dpcrobos `
-  --nsg-name VMSSRoboDPCNSG `
-  --name Allow-VNC `
-  --priority 1040 `
-  --source-address-prefixes '*' `
-  --destination-port-ranges 5900 `
-  --access Allow `
-  --protocol Tcp `
-  --direction Inbound `
-  --description "Permitir VNC"
-
-
-# Adicionar regra NSG para porta 3000 (WS WATCHER)
-az network nsg rule create `
-  --resource-group dpcrobos `
-  --nsg-name VMSSRoboDPCNSG `
-  --name Allow-WATCHER `
-  --priority 1050 `
-  --source-address-prefixes '*' `
-  --destination-port-ranges 3000 `
-  --access Allow `
-  --protocol Tcp `
-  --direction Inbound `
-  --description "WS WATCHER"
-
 
 # 1. Capturar nova imagem (na máquina local, não na VM)
 az vm deallocate --resource-group dpcrobos --name VMrobodpc
@@ -204,12 +175,14 @@ az vmss create `
 
 # --------------------------------------------------------- USAR ESSE ---------------------------------------------------------
 #MODO UNIFORM PARA IDS SEQUENCIAIS
+# --instance-count TEM de casar com TOTAL_MACHINES/TOTAL_SLOTS do .env do dpc-interno-rep na imagem
+# (Barra Bonita nov-2026: 36 = 34 registros + 2 reservas quentes, ids 0..35; Furnas out-2026 era 4).
 az vmss create `
   --resource-group dpcrobos `
   --name VMSSRoboDPC `
   --orchestration-mode Uniform `
   --image "/subscriptions/5c27bb8e-190b-4cf7-bd0e-c9dfca554525/resourceGroups/dpcrobos/providers/Microsoft.Compute/galleries/robodpc/images/robodpcVMI/versions/2.0.0" `
-  --instance-count 22 `
+  --instance-count 36 `
   --vm-sku Standard_F2s_v2 `
   --priority Spot `
   --eviction-policy Delete `
@@ -224,7 +197,35 @@ az vmss create `
   --upgrade-policy-mode Manual `
   --specialized
 
+# Adicionar regra NSG para porta 5900 (VNC)
+az network nsg rule create `
+  --resource-group dpcrobos `
+  --nsg-name VMSSRoboDPCNSG `
+  --name Allow-VNC `
+  --priority 1040 `
+  --source-address-prefixes '*' `
+  --destination-port-ranges 5900 `
+  --access Allow `
+  --protocol Tcp `
+  --direction Inbound `
+  --description "Permitir VNC"
 
+
+# Adicionar regra NSG para porta 3000 (WS WATCHER)
+az network nsg rule create `
+  --resource-group dpcrobos `
+  --nsg-name VMSSRoboDPCNSG `
+  --name Allow-WATCHER `
+  --priority 1050 `
+  --source-address-prefixes '*' `
+  --destination-port-ranges 3000 `
+  --access Allow `
+  --protocol Tcp `
+  --direction Inbound `
+  --description "WS WATCHER"
+
+
+  _______________________________________________
 
 
  # Habilita System-assigned Managed Identity no VMSS

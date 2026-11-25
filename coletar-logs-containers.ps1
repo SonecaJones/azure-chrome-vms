@@ -98,12 +98,14 @@ New-Item -ItemType Directory -Force -Path $pastaFull | Out-Null
 Titulo "DOWNLOAD"
 
 $resumo = @()
+$falhas = @()
 foreach ($cg in $Grupos) {
     # O container INTERNO nao tem o nome do group (group `robodpc_gov_rep1_0`, container `robo`).
     # Usar o nome do group na URL devolve ContainerNotFound.
     $det = & az container show -g $ResourceGroup -n $cg -o json 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $det) {
         Write-Host ("  [!!] {0}: falha em 'az container show' - pulando" -f $cg) -ForegroundColor Red
+        $falhas += $cg
         continue
     }
     $det = ($det -join "`n") | ConvertFrom-Json
@@ -120,6 +122,7 @@ foreach ($cg in $Grupos) {
             $conteudo = $r.content
         } catch {
             Write-Host ("  [!!] {0}/{1}: {2}" -f $cg, $nomeCont, $_.Exception.Message) -ForegroundColor Red
+            $falhas += "$cg/$nomeCont"
             continue
         }
         if ($null -eq $conteudo) { $conteudo = "" }
@@ -134,7 +137,8 @@ foreach ($cg in $Grupos) {
 
         Write-Host ("  [ok] {0,-24} restarts={1} estado={2} linhas={3} bytes={4}" -f `
             $cg, $c.instanceView.restartCount, $c.instanceView.currentState.state, $linhasArr.Count, $conteudo.Length)
-        Write-Host ("       1a linha: {0}" -f $primeira)
+        # So o ECO no console e mascarado (a 1a linha e o DB_CONN com senha); o arquivo fica intacto.
+        Write-Host ("       1a linha: {0}" -f ("$primeira" -replace '//[^/@\s]*@', '//***@'))
 
         $resumo += [pscustomobject]@{
             Grupo         = $cg
@@ -144,7 +148,9 @@ foreach ($cg in $Grupos) {
             Inicio        = $c.instanceView.currentState.startTime
             Linhas        = $linhasArr.Count
             Bytes         = $conteudo.Length
-            PrimeiraLinha = $primeira
+            # Mascarado tambem no CSV (2026-11-25): o _resumo.csv circula mais que o log. O log em
+            # full\ continua intacto (a integridade se confere pela 1a linha de la).
+            PrimeiraLinha = ("$primeira" -replace '//[^/@\s]*@', '//***@')
         }
     }
 }
@@ -173,3 +179,10 @@ if ($iguais.Count -gt 0 -and $resumo.Count -gt 1) {
 Write-Host ""
 Write-Host "Arquivos em : $pastaFull"
 Write-Host "Resumo em   : $csv"
+
+. (Join-Path $PSScriptRoot "coleta-blob-comum.ps1")
+$motivos = @()
+if ($falhas.Count -gt 0) { $motivos += "$($falhas.Count) container(s) sem log no disco: $($falhas -join ', ')" }
+$vazios = @($resumo | Where-Object { $_.Bytes -eq 0 })
+if ($vazios.Count -gt 0) { $motivos += "$($vazios.Count) log(s) vazio(s): $(($vazios | ForEach-Object { $_.Grupo }) -join ', ')" }
+Escreve-Veredito $motivos "os containers do dpc-login-gov"

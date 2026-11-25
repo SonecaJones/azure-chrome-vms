@@ -172,6 +172,46 @@ try {
     $c6 = Get-Content $logSup.FullName -Raw -ErrorAction SilentlyContinue
     Ok ($c6 -match 'fonte=heartbeat') "o veredito veio do heartbeat (nao do relogio de partida)"
     Ok ($c6 -match 'heartbeat=.*heartbeat-\*\.txt') "o glob do heartbeat aparece no cabecalho da supervisao"
+
+    # --- 7) B5: heartbeat VAZIO (lido no meio da escrita do bot) nao e erro do laco ---------------
+    # No dia D 2026-10-30 o log do supervisor teve 5x 'erro no laco (ignorado): ... "Match" ...
+    # Parameter name: input': o bot regrava o heartbeat e o supervisor leu o arquivo vazio, o
+    # Get-Content devolveu $null e [regex]::Match([string]$null, ...) lancou no PS 5.1. Aqui o
+    # arquivo e vazio DE PROPOSITO e o bot falso nao bate (sem HB_ARQUIVO): o supervisor tem que
+    # tratar como "sem leitura" - sem erro no laco, sem veredito de travamento, bot intacto.
+    if (Vivo $supProc.Id) { Stop-Process -Id $supProc.Id -Force -ErrorAction SilentlyContinue }
+    Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*fake-bot.js*" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Remove-Item Env:HB_ARQUIVO, Env:HB_BATIDAS, Env:HB_PRAZO_MS -ErrorAction SilentlyContinue
+    $logsDir7 = "$Base\logs7"
+    New-Item -ItemType Directory -Force -Path $logsDir7 | Out-Null
+    New-Item -ItemType File -Path "$logsDir7\heartbeat-VM-TESTE.txt" -Force | Out-Null
+    Ok ((Get-Item "$logsDir7\heartbeat-VM-TESTE.txt").Length -eq 0) "heartbeat do cenario 7 esta vazio (0 bytes)"
+    $args7 = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $sup,
+        "-ScriptPath", $fake, "-VmName", "VM-TESTE", "-VmId", "id-teste",
+        "-LogsDir", $logsDir7, "-Sentinela", $sentinela,
+        "-IntervaloS", "2", "-EsperaBaseS", "1", "-EsperaMaxS", "4", "-SaudavelS", "3600", "-SemTail",
+        "-TravadoMargemS", "2", "-PrazoPadraoS", "3"
+    )
+    $supProc = Start-Process powershell.exe -ArgumentList $args7 -PassThru -WindowStyle Minimized
+    Ok (Espera { Test-Path "$logsDir7\node.pid" } 30 "node.pid do cenario 7") "bot do cenario 7 subiu"
+    $pid7 = 0
+    if (Test-Path "$logsDir7\node.pid") { $pid7 = [int](Get-Content "$logsDir7\node.pid" | Select-Object -First 1) }
+    Ok (Vivo $pid7) "bot vivo (pid $pid7)"
+    # Varias voltas do laco (intervalo 2s) com o heartbeat vazio; mais que prazo+margem (5s) de
+    # proposito, para que um veredito de travamento indevido tambem aparecesse.
+    Start-Sleep -Seconds 12
+    $logSup7 = Get-ChildItem "$logsDir7\supervisor-VM-TESTE-*.log" -ErrorAction SilentlyContinue | Select-Object -First 1
+    Ok ($logSup7 -ne $null) "log do supervisor do cenario 7 criado"
+    $c7 = ""
+    if ($logSup7) { $c7 = Get-Content $logSup7.FullName -Raw -ErrorAction SilentlyContinue }
+    Ok ($c7 -match 'supervisao ativa') "o laco de supervisao entrou em operacao"
+    Ok ($c7 -notmatch 'erro no laco') "heartbeat vazio NAO gera 'erro no laco (ignorado)'"
+    Ok ($c7 -notmatch 'TRAVADO') "heartbeat vazio NAO e tratado como travamento"
+    Ok (Vivo $pid7) "o bot continua vivo (heartbeat ilegivel = sem leitura, nao mata)"
 }
 finally {
     Remove-Item Env:HB_ARQUIVO, Env:HB_BATIDAS, Env:HB_PRAZO_MS -ErrorAction SilentlyContinue
